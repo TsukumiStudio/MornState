@@ -3,7 +3,8 @@
     "rootNamespace": "MornLib",
     "references": [
         "MornState",
-        "GUID:f51ebe6a0ceec4240a699833d6309b23"
+        "GUID:f51ebe6a0ceec4240a699833d6309b23",
+        "GUID:520891f70526d454fa74c098f96aaedd"
     ],
     "includePlatforms": [
         "Editor"
