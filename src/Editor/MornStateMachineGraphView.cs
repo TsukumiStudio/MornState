@@ -148,16 +148,19 @@ namespace MornLib {
         }
         public override void BuildContextualMenu(ContextualMenuPopulateEvent evt) {
             if(_target != null) {
-                evt.menu.AppendAction("Create State...",_ => OpenSearch());
+                var localPos = evt.mousePosition;
+                evt.menu.AppendAction("Create State...",_ => OpenSearchAtLocal(localPos));
                 evt.menu.AppendSeparator();
             }
             base.BuildContextualMenu(evt);
         }
-        public void OpenSearch() {
+        public void OpenSearchAtLocal(Vector2 viewLocalPos) {
             if(_target == null) return;
             var provider = ScriptableObject.CreateInstance<MornStateSearchProvider>();
-            provider.Setup(this,EditorWindow.focusedWindow);
-            var screenPos = GUIUtility.GUIToScreenPoint(Event.current != null ? Event.current.mousePosition : Vector2.zero);
+            var window = EditorWindow.focusedWindow;
+            provider.Setup(this,window);
+            var worldPos = this.LocalToWorld(viewLocalPos);
+            var screenPos = window != null ? window.position.position + worldPos : worldPos;
             SearchWindow.Open(new SearchWindowContext(screenPos),provider);
         }
         public void CreateStateAt(System.Type type,Vector2 graphPos) {
