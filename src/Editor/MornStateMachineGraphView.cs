@@ -37,8 +37,6 @@ namespace MornLib {
             var toolbar = new Toolbar();
             var refreshBtn = new ToolbarButton(Reload) { text = "Refresh" };
             toolbar.Add(refreshBtn);
-            var unpinBtn = new ToolbarButton(() => { _pinned = null; Reload(); }) { text = "Unpin" };
-            toolbar.Add(unpinBtn);
             rootVisualElement.Insert(0,toolbar);
             Selection.selectionChanged += Reload;
             Reload();
@@ -108,13 +106,30 @@ namespace MornLib {
                 title = string.IsNullOrEmpty(state.name) ? state.GetType().Name : state.name,
                 userData = state,
             };
-            node.SetPosition(new Rect(40 + index % 5 * 240,40 + index / 5 * 140,200,100));
+            node.SetPosition(new Rect(40 + index % 5 * 280,40 + index / 5 * 240,260,180));
             var inPort = node.InstantiatePort(Orientation.Horizontal,Direction.Input,Port.Capacity.Multi,typeof(StateBehaviour));
             inPort.portName = "in";
             node.inputContainer.Add(inPort);
             var outPort = node.InstantiatePort(Orientation.Horizontal,Direction.Output,Port.Capacity.Multi,typeof(StateBehaviour));
             outPort.portName = state.GetType().Name;
             node.outputContainer.Add(outPort);
+            var so = new SerializedObject(state);
+            var imgui = new IMGUIContainer(() => {
+                if(state == null) return;
+                so.Update();
+                var prop = so.GetIterator();
+                prop.NextVisible(true);
+                while(prop.NextVisible(false)) {
+                    EditorGUILayout.PropertyField(prop,true);
+                }
+                so.ApplyModifiedProperties();
+            });
+            imgui.style.minWidth = 240;
+            imgui.style.paddingLeft = 6;
+            imgui.style.paddingRight = 6;
+            imgui.style.paddingTop = 4;
+            imgui.style.paddingBottom = 4;
+            node.extensionContainer.Add(imgui);
             node.RefreshExpandedState();
             node.RefreshPorts();
             return node;
