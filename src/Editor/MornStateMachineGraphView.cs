@@ -69,6 +69,8 @@ namespace MornLib {
             Insert(0,bg);
             bg.StretchToParentSize();
             graphViewChanged += OnGraphViewChanged;
+            RegisterCallback<AttachToPanelEvent>(_ => EditorApplication.update += OnEditorUpdate);
+            RegisterCallback<DetachFromPanelEvent>(_ => EditorApplication.update -= OnEditorUpdate);
             nodeCreationRequest = ctx => {
                 if(_target == null) return;
                 var window = EditorWindow.focusedWindow;
@@ -108,6 +110,54 @@ namespace MornLib {
                         AddElement(edge);
                     }
                 }
+            }
+            UpdateHighlights();
+        }
+        private int _lastCurrentSnapshot = int.MinValue;
+        private void OnEditorUpdate() {
+            if(Application.isPlaying == false) return;
+            if(_target == null) return;
+            var snapshot = 0;
+            foreach(var b in _target.CurrentBehaviours) {
+                if(b != null) snapshot = snapshot * 31 + b.StateID;
+            }
+            if(snapshot == _lastCurrentSnapshot) return;
+            _lastCurrentSnapshot = snapshot;
+            UpdateHighlights();
+        }
+        private void UpdateHighlights() {
+            if(_target == null) return;
+            var startID = _target.startStateID;
+            var currentIDs = new HashSet<int>();
+            if(Application.isPlaying) {
+                foreach(var b in _target.CurrentBehaviours) {
+                    if(b != null) currentIDs.Add(b.StateID);
+                }
+            }
+            foreach(var pair in _nodeByID) {
+                var n = pair.Value;
+                var isStart = pair.Key == startID;
+                var isCurrent = currentIDs.Contains(pair.Key);
+                Color color;
+                int width;
+                if(isCurrent) {
+                    color = new Color(1.00f,0.70f,0.20f);
+                    width = 3;
+                } else if(isStart) {
+                    color = new Color(0.30f,0.95f,0.45f);
+                    width = 2;
+                } else {
+                    color = new Color(0.20f,0.20f,0.20f);
+                    width = 1;
+                }
+                n.style.borderTopColor = color;
+                n.style.borderBottomColor = color;
+                n.style.borderLeftColor = color;
+                n.style.borderRightColor = color;
+                n.style.borderTopWidth = width;
+                n.style.borderBottomWidth = width;
+                n.style.borderLeftWidth = width;
+                n.style.borderRightWidth = width;
             }
         }
         private static IEnumerable<(string fieldName,StateLink link)> EnumerateStateLinkFields(StateBehaviour state) {
