@@ -1,6 +1,6 @@
 using UnityEngine;
 namespace MornLib.Samples {
-    public class SampleWaitFrameState : StateBehaviour {
+    public class SampleWaitFrameState : MornStateBehaviour {
         [SerializeField] private int _frames = 30;
         [SerializeField] private StateLink _next;
         private int _elapsed;

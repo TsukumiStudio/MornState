@@ -7,18 +7,17 @@ namespace MornLib {
         public class StateNode {
             public int id;
             public string name;
-            public Vector2 graphPosition;
-            [SerializeReference] public List<StateBehaviour> behaviours = new();
+            [SerializeReference] public List<MornStateBehaviour> behaviours = new();
         }
         [SerializeField] private List<StateNode> _nodes = new();
-        private readonly List<StateBehaviour> _currentBehaviours = new();
-        private readonly List<StateBehaviour> _updateBuffer = new();
+        private readonly List<MornStateBehaviour> _currentBehaviours = new();
+        private readonly List<MornStateBehaviour> _updateBuffer = new();
         private int _pendingTransition = NotPending;
         private int _currentStateID;
         private const int NotPending = int.MinValue;
         public IReadOnlyList<StateNode> Nodes => _nodes;
         public List<StateNode> NodesMutable => _nodes;
-        public IReadOnlyList<StateBehaviour> CurrentBehaviours => _currentBehaviours;
+        public IReadOnlyList<MornStateBehaviour> CurrentBehaviours => _currentBehaviours;
         public int CurrentStateID => _currentStateID;
         private void Awake() {
             _currentBehaviours.Clear();

@@ -29,12 +29,12 @@ namespace MornLib {
                 try { all = asm.GetTypes(); } catch { continue; }
                 foreach(var t in all) {
                     if(t.IsAbstract) continue;
-                    if(typeof(StateBehaviour).IsAssignableFrom(t) == false) continue;
+                    if(typeof(MornStateBehaviour).IsAssignableFrom(t) == false) continue;
                     types.Add(t);
                 }
             }
             types.Sort((a,b) => string.Compare(a.FullName,b.FullName,StringComparison.Ordinal));
-            var root = new Node { Name = "Create State" };
+            var root = new Node { Name = _mode == Mode.AddBehaviour ? "Add Behaviour" : "Create State" };
             foreach(var t in types) {
                 var node = root;
                 var parts = string.IsNullOrEmpty(t.Namespace)

@@ -1,3 +1,3 @@
 namespace MornLib {
-    public class EmptyState : StateBehaviour {}
+    public class EmptyState : MornStateBehaviour {}
 }

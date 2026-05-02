@@ -1,6 +1,6 @@
 using UnityEngine;
 namespace MornLib.Samples {
-    public class SampleWaitTimeState : StateBehaviour {
+    public class SampleWaitTimeState : MornStateBehaviour {
         [SerializeField] private float _waitSeconds = 1f;
         [SerializeField] private StateLink _next;
         private float _elapsed;

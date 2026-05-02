@@ -6,7 +6,7 @@ using System.Threading;
 using UnityEngine;
 namespace MornLib {
     [Serializable]
-    public abstract class StateBehaviour {
+    public abstract class MornStateBehaviour {
         [SerializeField,HideInInspector] private int _stateID;
         [NonSerialized] private MornStateMachine _owner;
         [NonSerialized] private CancellationTokenSource _cts;
@@ -57,7 +57,6 @@ namespace MornLib {
         public void Transition(StateLink link) {
             if(link == null) return;
             if(_owner == null) return;
-            link.transitionCount++;
             _owner.Transition(link.stateID);
         }
         public void RebuildStateLinkCache() {
@@ -73,7 +72,7 @@ namespace MornLib {
             if(_linkCache == null) RebuildStateLinkCache();
             return _linkCache;
         }
-        public IEnumerable<T> GetBehaviours<T>() where T : StateBehaviour {
+        public IEnumerable<T> GetBehaviours<T>() where T : MornStateBehaviour {
             if(_owner == null) yield break;
             foreach(var n in _owner.Nodes) {
                 foreach(var b in n.behaviours) {
