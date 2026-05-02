@@ -21,6 +21,10 @@ namespace MornLib {
         public IReadOnlyList<StateBehaviour> CurrentBehaviours => _currentBehaviours;
         public int CurrentStateID => _currentStateID;
         private void Awake() {
+            _currentBehaviours.Clear();
+            _updateBuffer.Clear();
+            _pendingTransition = NotPending;
+            _currentStateID = 0;
             ReinjectOwners();
             foreach(var n in _nodes) foreach(var b in n.behaviours) if(b != null) b.RebuildStateLinkCache();
         }

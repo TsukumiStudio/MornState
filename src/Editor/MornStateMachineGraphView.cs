@@ -72,8 +72,14 @@ namespace MornLib {
             serializeGraphElements = SerializeForClipboard;
             unserializeAndPaste = UnserializeAndPaste;
             canPasteSerializedData = data => string.IsNullOrEmpty(data) == false && data.StartsWith("{");
-            RegisterCallback<AttachToPanelEvent>(_ => EditorApplication.update += OnEditorUpdate);
-            RegisterCallback<DetachFromPanelEvent>(_ => EditorApplication.update -= OnEditorUpdate);
+            RegisterCallback<AttachToPanelEvent>(_ => {
+                EditorApplication.update += OnEditorUpdate;
+                EditorApplication.playModeStateChanged += OnPlayModeChanged;
+            });
+            RegisterCallback<DetachFromPanelEvent>(_ => {
+                EditorApplication.update -= OnEditorUpdate;
+                EditorApplication.playModeStateChanged -= OnPlayModeChanged;
+            });
             nodeCreationRequest = ctx => {
                 if(_target == null) return;
                 var window = EditorWindow.focusedWindow;
@@ -115,12 +121,18 @@ namespace MornLib {
         }
         private int _lastCurrentSnapshot = int.MinValue;
         private void OnEditorUpdate() {
-            if(Application.isPlaying == false) return;
             if(_target == null) return;
-            var snapshot = _target.CurrentStateID;
+            var snapshot = Application.isPlaying ? _target.CurrentStateID : 0;
             if(snapshot == _lastCurrentSnapshot) return;
             _lastCurrentSnapshot = snapshot;
             UpdateHighlights();
+        }
+        private void OnPlayModeChanged(PlayModeStateChange c) {
+            _lastCurrentSnapshot = int.MinValue;
+            EditorApplication.delayCall += () => {
+                if(_target == null) return;
+                LoadStateMachine(_target);
+            };
         }
         private void UpdateHighlights() {
             if(_target == null) return;
