@@ -43,6 +43,7 @@ namespace MornLib {
         public virtual void OnStateBegin() {}
         public virtual void OnStateUpdate() {}
         public virtual void OnStateEnd() {}
+        protected virtual void OnValidate() {}
         protected void Transition(StateLink link) {
             if(link == null) return;
             if(Owner == null) return;
@@ -61,6 +62,13 @@ namespace MornLib {
         public IReadOnlyList<StateLink> GetStateLinks() {
             if(_linkCache == null) RebuildStateLinkCache();
             return _linkCache;
+        }
+        public IEnumerable<T> GetBehaviours<T>() where T : StateBehaviour {
+            if(Owner == null) yield break;
+            foreach(var s in Owner.GetComponentsInChildren<StateBehaviour>(true)) {
+                if(s.Owner != Owner) continue;
+                if(s is T t) yield return t;
+            }
         }
     }
 }

@@ -13,7 +13,7 @@ namespace MornLib {
         [SerializeField] private Color _lineColor = Color.white;
         [SerializeField] private string _name = string.Empty;
         [NonSerialized] private int _transitionCount;
-        public event Action onTransitionCountChanged;
+        public Action onTransitionCountChanged;
         public int stateID {
             get => _stateID;
             set => _stateID = value;
