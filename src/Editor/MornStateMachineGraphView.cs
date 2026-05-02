@@ -75,6 +75,9 @@ namespace MornLib {
             Insert(0,bg);
             bg.StretchToParentSize();
             graphViewChanged += OnGraphViewChanged;
+            RegisterCallback<MouseMoveEvent>(OnEdgeDragMove);
+            RegisterCallback<MouseUpEvent>(_ => StopEdgeDrag(),TrickleDown.TrickleDown);
+            RegisterCallback<MouseLeaveEvent>(_ => StopEdgeDrag());
             serializeGraphElements = SerializeForClipboard;
             unserializeAndPaste = UnserializeAndPaste;
             canPasteSerializedData = data => string.IsNullOrEmpty(data) == false && data.StartsWith("{");
@@ -294,8 +297,52 @@ namespace MornLib {
             port.userData = (state,link);
             if(port.edgeConnector != null) port.RemoveManipulator(port.edgeConnector);
             port.AddManipulator(new EdgeConnector<Edge>(new NodeDropConnectorListener(this)));
+            port.RegisterCallback<MouseDownEvent>(e => { if(e.button == 0) _isDraggingEdge = true; });
             row.Add(port);
             return row;
+        }
+        private bool _isDraggingEdge;
+        private Node _dropTargetNode;
+        private void OnEdgeDragMove(MouseMoveEvent e) {
+            if(_isDraggingEdge == false) return;
+            if((e.pressedButtons & 1) == 0) {
+                StopEdgeDrag();
+                return;
+            }
+            var picked = new List<VisualElement>();
+            panel.PickAll(e.mousePosition,picked);
+            Node target = null;
+            foreach(var elem in picked) {
+                for(VisualElement cur = elem;cur != null;cur = cur.parent) {
+                    if(cur is Node n) { target = n; break; }
+                }
+                if(target != null) break;
+            }
+            if(target == _dropTargetNode) return;
+            ClearDropTargetHighlight();
+            _dropTargetNode = target;
+            if(target != null) ApplyDropTargetHighlight(target);
+        }
+        private void StopEdgeDrag() {
+            if(_isDraggingEdge == false) return;
+            _isDraggingEdge = false;
+            ClearDropTargetHighlight();
+        }
+        private static void ApplyDropTargetHighlight(Node node) {
+            var c = new Color(0.20f,0.85f,1.00f);
+            node.style.borderTopColor = c;
+            node.style.borderBottomColor = c;
+            node.style.borderLeftColor = c;
+            node.style.borderRightColor = c;
+            node.style.borderTopWidth = 3;
+            node.style.borderBottomWidth = 3;
+            node.style.borderLeftWidth = 3;
+            node.style.borderRightWidth = 3;
+        }
+        private void ClearDropTargetHighlight() {
+            if(_dropTargetNode == null) return;
+            _dropTargetNode = null;
+            UpdateHighlights();
         }
         public void ConnectFromOutputToNode(Port outputPort,Node targetNode) {
             if(outputPort == null || targetNode == null || _target == null) return;
