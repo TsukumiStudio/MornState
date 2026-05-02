@@ -12,6 +12,7 @@ namespace MornLib {
         [SerializeField] private List<StateNode> _nodes = new();
         private readonly Dictionary<int,List<StateBehaviour>> _statesByID = new();
         private readonly List<StateBehaviour> _currentBehaviours = new();
+        private readonly List<StateBehaviour> _updateBuffer = new();
         private int _pendingTransition = NotPending;
         private const int NotPending = int.MinValue;
         public IReadOnlyList<StateNode> Nodes => _nodes;
@@ -27,7 +28,12 @@ namespace MornLib {
             if(_playOnStart) Transition(_startStateID);
         }
         private void Update() {
-            foreach(var b in _currentBehaviours) b.InternalUpdate();
+            _updateBuffer.Clear();
+            _updateBuffer.AddRange(_currentBehaviours);
+            foreach(var b in _updateBuffer) {
+                if(_currentBehaviours.Contains(b) == false) continue;
+                b.InternalUpdate();
+            }
             FlushPending();
         }
         private void LateUpdate() {
