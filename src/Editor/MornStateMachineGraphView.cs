@@ -297,14 +297,14 @@ namespace MornLib {
             var port = node.InstantiatePort(Orientation.Horizontal,Direction.Output,Port.Capacity.Single,typeof(StateBehaviour));
             port.portName = "";
             port.userData = (state,link);
-            if(port.edgeConnector != null) port.RemoveManipulator(port.edgeConnector);
-            port.AddManipulator(new EdgeConnector<Edge>(new NodeDropConnectorListener(this)));
             port.RegisterCallback<MouseDownEvent>(e => { if(e.button == 0) _isDraggingEdge = true; },TrickleDown.TrickleDown);
             port.RegisterCallback<PointerDownEvent>(e => { if(e.button == 0) _isDraggingEdge = true; },TrickleDown.TrickleDown);
-            port.RegisterCallback<PointerMoveEvent>(e => { if(_isDraggingEdge) HandleDragMove(e.position); });
-            port.RegisterCallback<MouseMoveEvent>(e => { if(_isDraggingEdge) HandleDragMove(e.mousePosition); });
-            port.RegisterCallback<PointerUpEvent>(_ => StopEdgeDrag());
-            port.RegisterCallback<MouseUpEvent>(_ => StopEdgeDrag());
+            port.RegisterCallback<PointerMoveEvent>(e => { if(_isDraggingEdge) HandleDragMove(e.position); },TrickleDown.TrickleDown);
+            port.RegisterCallback<MouseMoveEvent>(e => { if(_isDraggingEdge) HandleDragMove(e.mousePosition); },TrickleDown.TrickleDown);
+            port.RegisterCallback<PointerUpEvent>(_ => StopEdgeDrag(),TrickleDown.TrickleDown);
+            port.RegisterCallback<MouseUpEvent>(_ => StopEdgeDrag(),TrickleDown.TrickleDown);
+            if(port.edgeConnector != null) port.RemoveManipulator(port.edgeConnector);
+            port.AddManipulator(new EdgeConnector<Edge>(new NodeDropConnectorListener(this)));
             row.Add(port);
             return row;
         }
