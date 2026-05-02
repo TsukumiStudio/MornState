@@ -75,9 +75,9 @@ namespace MornLib {
             Insert(0,bg);
             bg.StretchToParentSize();
             graphViewChanged += OnGraphViewChanged;
-            RegisterCallback<MouseMoveEvent>(OnEdgeDragMove);
+            RegisterCallback<MouseMoveEvent>(OnEdgeDragMove,TrickleDown.TrickleDown);
             RegisterCallback<MouseUpEvent>(_ => StopEdgeDrag(),TrickleDown.TrickleDown);
-            RegisterCallback<MouseLeaveEvent>(_ => StopEdgeDrag());
+            RegisterCallback<MouseLeaveEvent>(_ => StopEdgeDrag(),TrickleDown.TrickleDown);
             serializeGraphElements = SerializeForClipboard;
             unserializeAndPaste = UnserializeAndPaste;
             canPasteSerializedData = data => string.IsNullOrEmpty(data) == false && data.StartsWith("{");
@@ -297,7 +297,9 @@ namespace MornLib {
             port.userData = (state,link);
             if(port.edgeConnector != null) port.RemoveManipulator(port.edgeConnector);
             port.AddManipulator(new EdgeConnector<Edge>(new NodeDropConnectorListener(this)));
-            port.RegisterCallback<MouseDownEvent>(e => { if(e.button == 0) _isDraggingEdge = true; });
+            port.RegisterCallback<MouseDownEvent>(e => { if(e.button == 0) _isDraggingEdge = true; },TrickleDown.TrickleDown);
+            port.RegisterCallback<MouseMoveEvent>(e => { if(_isDraggingEdge) HandleDragMove(e.mousePosition); });
+            port.RegisterCallback<MouseUpEvent>(_ => StopEdgeDrag());
             row.Add(port);
             return row;
         }
@@ -309,8 +311,11 @@ namespace MornLib {
                 StopEdgeDrag();
                 return;
             }
+            HandleDragMove(e.mousePosition);
+        }
+        private void HandleDragMove(Vector2 pos) {
             var picked = new List<VisualElement>();
-            panel.PickAll(e.mousePosition,picked);
+            panel.PickAll(pos,picked);
             Node target = null;
             foreach(var elem in picked) {
                 for(VisualElement cur = elem;cur != null;cur = cur.parent) {
