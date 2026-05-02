@@ -141,17 +141,27 @@ namespace MornLib {
             };
             var titleLabel = node.titleContainer.Q<Label>("title-label");
             if(titleLabel != null) titleLabel.style.display = DisplayStyle.None;
+            node.titleContainer.style.height = 22;
+            node.titleContainer.style.minHeight = 22;
+            node.titleContainer.style.paddingTop = 0;
+            node.titleContainer.style.paddingBottom = 0;
             var titleField = new TextField { value = displayName };
             titleField.style.flexGrow = 1;
             titleField.style.marginLeft = 4;
             titleField.style.marginRight = 4;
             titleField.style.marginTop = 0;
             titleField.style.marginBottom = 0;
+            titleField.style.height = 20;
+            titleField.style.minHeight = 20;
             var titleInput = titleField.Q(TextField.textInputUssName);
             if(titleInput != null) {
                 titleInput.style.paddingTop = 0;
                 titleInput.style.paddingBottom = 0;
-                titleInput.style.minHeight = 18;
+                titleInput.style.marginTop = 0;
+                titleInput.style.marginBottom = 0;
+                titleInput.style.height = 20;
+                titleInput.style.minHeight = 20;
+                titleInput.style.fontSize = 12;
             }
             titleField.RegisterValueChangedCallback(e => RenameNode(stateID,e.newValue,node));
             node.titleContainer.Insert(0,titleField);
