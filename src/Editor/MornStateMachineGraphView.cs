@@ -75,9 +75,11 @@ namespace MornLib {
             Insert(0,bg);
             bg.StretchToParentSize();
             graphViewChanged += OnGraphViewChanged;
+            RegisterCallback<PointerMoveEvent>(OnEdgePointerMove,TrickleDown.TrickleDown);
+            RegisterCallback<PointerUpEvent>(_ => StopEdgeDrag(),TrickleDown.TrickleDown);
+            RegisterCallback<PointerLeaveEvent>(_ => StopEdgeDrag(),TrickleDown.TrickleDown);
             RegisterCallback<MouseMoveEvent>(OnEdgeDragMove,TrickleDown.TrickleDown);
             RegisterCallback<MouseUpEvent>(_ => StopEdgeDrag(),TrickleDown.TrickleDown);
-            RegisterCallback<MouseLeaveEvent>(_ => StopEdgeDrag(),TrickleDown.TrickleDown);
             serializeGraphElements = SerializeForClipboard;
             unserializeAndPaste = UnserializeAndPaste;
             canPasteSerializedData = data => string.IsNullOrEmpty(data) == false && data.StartsWith("{");
@@ -298,7 +300,10 @@ namespace MornLib {
             if(port.edgeConnector != null) port.RemoveManipulator(port.edgeConnector);
             port.AddManipulator(new EdgeConnector<Edge>(new NodeDropConnectorListener(this)));
             port.RegisterCallback<MouseDownEvent>(e => { if(e.button == 0) _isDraggingEdge = true; },TrickleDown.TrickleDown);
+            port.RegisterCallback<PointerDownEvent>(e => { if(e.button == 0) _isDraggingEdge = true; },TrickleDown.TrickleDown);
+            port.RegisterCallback<PointerMoveEvent>(e => { if(_isDraggingEdge) HandleDragMove(e.position); });
             port.RegisterCallback<MouseMoveEvent>(e => { if(_isDraggingEdge) HandleDragMove(e.mousePosition); });
+            port.RegisterCallback<PointerUpEvent>(_ => StopEdgeDrag());
             port.RegisterCallback<MouseUpEvent>(_ => StopEdgeDrag());
             row.Add(port);
             return row;
@@ -312,6 +317,10 @@ namespace MornLib {
                 return;
             }
             HandleDragMove(e.mousePosition);
+        }
+        private void OnEdgePointerMove(PointerMoveEvent e) {
+            if(_isDraggingEdge == false) return;
+            HandleDragMove(e.position);
         }
         private void HandleDragMove(Vector2 pos) {
             var picked = new List<VisualElement>();
