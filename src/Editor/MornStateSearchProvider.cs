@@ -8,10 +8,10 @@ using UnityEngine.UIElements;
 namespace MornLib {
     public class MornStateSearchProvider : ScriptableObject,ISearchWindowProvider {
         private MornStateMachineGraphView _view;
-        private EditorWindow _window;
-        public void Setup(MornStateMachineGraphView view,EditorWindow window) {
+        private Vector2 _graphPos;
+        public void Setup(MornStateMachineGraphView view,Vector2 graphPos) {
             _view = view;
-            _window = window;
+            _graphPos = graphPos;
         }
         public List<SearchTreeEntry> CreateSearchTree(SearchWindowContext context) {
             var types = new List<Type>();
@@ -59,12 +59,8 @@ namespace MornLib {
         }
         public bool OnSelectEntry(SearchTreeEntry entry,SearchWindowContext context) {
             if(entry.userData is Type t == false) return false;
-            if(_view == null || _window == null) return false;
-            var local = _window.rootVisualElement.ChangeCoordinatesTo(
-                _window.rootVisualElement.parent,
-                context.screenMousePosition - _window.position.position);
-            var graphPos = _view.contentViewContainer.WorldToLocal(local);
-            _view.CreateStateAt(t,graphPos);
+            if(_view == null) return false;
+            _view.CreateStateAt(t,_graphPos);
             return true;
         }
         private class Node {

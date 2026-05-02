@@ -69,8 +69,12 @@ namespace MornLib {
             graphViewChanged += OnGraphViewChanged;
             nodeCreationRequest = ctx => {
                 if(_target == null) return;
+                var window = EditorWindow.focusedWindow;
+                var winLocal = window != null ? ctx.screenMousePosition - window.position.position : ctx.screenMousePosition;
+                var viewLocal = this.WorldToLocal(winLocal);
+                var graphPos = contentViewContainer.WorldToLocal(this.LocalToWorld(viewLocal));
                 var provider = ScriptableObject.CreateInstance<MornStateSearchProvider>();
-                provider.Setup(this,EditorWindow.focusedWindow);
+                provider.Setup(this,graphPos);
                 SearchWindow.Open(new SearchWindowContext(ctx.screenMousePosition),provider);
             };
         }
@@ -156,9 +160,10 @@ namespace MornLib {
         }
         public void OpenSearchAtLocal(Vector2 viewLocalPos) {
             if(_target == null) return;
+            var graphPos = contentViewContainer.WorldToLocal(this.LocalToWorld(viewLocalPos));
             var provider = ScriptableObject.CreateInstance<MornStateSearchProvider>();
+            provider.Setup(this,graphPos);
             var window = EditorWindow.focusedWindow;
-            provider.Setup(this,window);
             var worldPos = this.LocalToWorld(viewLocalPos);
             var screenPos = window != null ? window.position.position + worldPos : worldPos;
             SearchWindow.Open(new SearchWindowContext(screenPos),provider);
