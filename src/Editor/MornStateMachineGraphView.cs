@@ -67,6 +67,12 @@ namespace MornLib {
             Insert(0,bg);
             bg.StretchToParentSize();
             graphViewChanged += OnGraphViewChanged;
+            nodeCreationRequest = ctx => {
+                if(_target == null) return;
+                var provider = ScriptableObject.CreateInstance<MornStateSearchProvider>();
+                provider.Setup(this,EditorWindow.focusedWindow);
+                SearchWindow.Open(new SearchWindowContext(ctx.screenMousePosition),provider);
+            };
         }
         public void LoadStateMachine(MornStateMachine fsm) {
             _target = fsm;
@@ -142,27 +148,20 @@ namespace MornLib {
         }
         public override void BuildContextualMenu(ContextualMenuPopulateEvent evt) {
             if(_target != null) {
-                var screenPos = evt.localMousePosition;
-                var graphPos = contentViewContainer.WorldToLocal(screenPos);
-                var types = new List<System.Type>();
-                foreach(var asm in System.AppDomain.CurrentDomain.GetAssemblies()) {
-                    System.Type[] all;
-                    try { all = asm.GetTypes(); } catch { continue; }
-                    foreach(var t in all) {
-                        if(t.IsAbstract) continue;
-                        if(typeof(StateBehaviour).IsAssignableFrom(t) == false) continue;
-                        types.Add(t);
-                    }
-                }
-                types.Sort((a,b) => string.Compare(a.FullName,b.FullName,System.StringComparison.Ordinal));
-                foreach(var type in types) {
-                    var t = type;
-                    var path = string.IsNullOrEmpty(t.Namespace) ? $"Create/{t.Name}" : $"Create/{t.Namespace.Replace('.','/')}/{t.Name}";
-                    evt.menu.AppendAction(path,_ => CreateStateNode(t,graphPos));
-                }
+                evt.menu.AppendAction("Create State...",_ => OpenSearch());
                 evt.menu.AppendSeparator();
             }
             base.BuildContextualMenu(evt);
+        }
+        public void OpenSearch() {
+            if(_target == null) return;
+            var provider = ScriptableObject.CreateInstance<MornStateSearchProvider>();
+            provider.Setup(this,EditorWindow.focusedWindow);
+            var screenPos = GUIUtility.GUIToScreenPoint(Event.current != null ? Event.current.mousePosition : Vector2.zero);
+            SearchWindow.Open(new SearchWindowContext(screenPos),provider);
+        }
+        public void CreateStateAt(System.Type type,Vector2 graphPos) {
+            CreateStateNode(type,graphPos);
         }
         private void CreateStateNode(System.Type type,Vector2 graphPos) {
             if(_target == null) return;
