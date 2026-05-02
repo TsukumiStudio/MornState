@@ -8,21 +8,21 @@ namespace MornLib {
             public int id;
             public string name;
             public Vector2 graphPosition;
+            [SerializeReference] public List<StateBehaviour> behaviours = new();
         }
         [SerializeField] private List<StateNode> _nodes = new();
-        private readonly Dictionary<int,List<StateBehaviour>> _statesByID = new();
         private readonly List<StateBehaviour> _currentBehaviours = new();
         private readonly List<StateBehaviour> _updateBuffer = new();
         private int _pendingTransition = NotPending;
+        private int _currentStateID;
         private const int NotPending = int.MinValue;
         public IReadOnlyList<StateNode> Nodes => _nodes;
-        public IReadOnlyDictionary<int,List<StateBehaviour>> StatesByID => _statesByID;
+        public List<StateNode> NodesMutable => _nodes;
         public IReadOnlyList<StateBehaviour> CurrentBehaviours => _currentBehaviours;
+        public int CurrentStateID => _currentStateID;
         private void Awake() {
-            CollectStates();
-            foreach(var pair in _statesByID) {
-                foreach(var b in pair.Value) b.RebuildStateLinkCache();
-            }
+            ReinjectOwners();
+            foreach(var n in _nodes) foreach(var b in n.behaviours) if(b != null) b.RebuildStateLinkCache();
         }
         private void Start() {
             if(_playOnStart) Transition(_startStateID);
@@ -43,30 +43,32 @@ namespace MornLib {
             _pendingTransition = stateID;
             FlushPending();
         }
+        public void ReinjectOwners() {
+            foreach(var n in _nodes) {
+                if(n.behaviours == null) continue;
+                foreach(var b in n.behaviours) {
+                    if(b == null) continue;
+                    b.SetOwner(this);
+                    b.StateID = n.id;
+                }
+            }
+        }
         private void FlushPending() {
             if(_pendingTransition == NotPending) return;
             var nextID = _pendingTransition;
             _pendingTransition = NotPending;
-            if(_statesByID.TryGetValue(nextID,out var nextList) == false) {
+            var nextNode = FindNode(nextID);
+            if(nextNode == null) {
                 Debug.LogWarning($"[MornState] StateID {nextID} not found on {name}.",this);
                 return;
             }
-            foreach(var b in _currentBehaviours) b.InternalEnd();
+            foreach(var b in _currentBehaviours) b?.InternalEnd();
             _currentBehaviours.Clear();
-            foreach(var b in nextList) {
+            _currentStateID = nextID;
+            foreach(var b in nextNode.behaviours) {
+                if(b == null) continue;
                 _currentBehaviours.Add(b);
                 b.InternalBegin();
-            }
-        }
-        public void CollectStates() {
-            _statesByID.Clear();
-            foreach(var s in GetComponents<StateBehaviour>()) {
-                if(s.StateID == 0) continue;
-                if(_statesByID.TryGetValue(s.StateID,out var list) == false) {
-                    list = new List<StateBehaviour>();
-                    _statesByID[s.StateID] = list;
-                }
-                list.Add(s);
             }
         }
         public StateNode FindNode(int id) {

@@ -1,29 +1,32 @@
+using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using System.Threading;
 using UnityEngine;
 namespace MornLib {
-    public abstract class StateBehaviour : MonoBehaviour {
+    [Serializable]
+    public abstract class StateBehaviour {
         [SerializeField,HideInInspector] private int _stateID;
-        private MornStateMachine _ownerCache;
-        private CancellationTokenSource _cts;
-        private List<StateLink> _linkCache;
+        [NonSerialized] private MornStateMachine _owner;
+        [NonSerialized] private CancellationTokenSource _cts;
+        [NonSerialized] private List<StateLink> _linkCache;
         public int StateID {
             get => _stateID;
             set => _stateID = value;
         }
-        public MornStateMachine Owner {
-            get {
-                if(_ownerCache == null) _ownerCache = GetComponent<MornStateMachine>();
-                if(_ownerCache == null) _ownerCache = GetComponentInParent<MornStateMachine>(true);
-                return _ownerCache;
-            }
-        }
+        public MornStateMachine Owner => _owner;
+        public GameObject gameObject => _owner != null ? _owner.gameObject : null;
+        public Transform transform => _owner != null ? _owner.transform : null;
+        public string name => _owner != null ? _owner.name : string.Empty;
         public CancellationToken CancellationTokenOnEnd {
             get {
                 if(_cts == null) _cts = new CancellationTokenSource();
                 return _cts.Token;
             }
+        }
+        internal void SetOwner(MornStateMachine owner) {
+            _owner = owner;
         }
         internal void InternalBegin() {
             _cts?.Dispose();
@@ -45,11 +48,17 @@ namespace MornLib {
         public virtual void OnStateUpdate() {}
         public virtual void OnStateEnd() {}
         protected virtual void OnValidate() {}
-        protected void Transition(StateLink link) {
+        public Coroutine StartCoroutine(IEnumerator routine) => _owner != null ? _owner.StartCoroutine(routine) : null;
+        public void StopCoroutine(Coroutine routine) { if(_owner != null && routine != null) _owner.StopCoroutine(routine); }
+        public void StopCoroutine(IEnumerator routine) { if(_owner != null && routine != null) _owner.StopCoroutine(routine); }
+        public T GetComponent<T>() => _owner != null ? _owner.GetComponent<T>() : default;
+        protected static void Destroy(UnityEngine.Object obj) { if(obj != null) UnityEngine.Object.Destroy(obj); }
+        protected static void DestroyImmediate(UnityEngine.Object obj) { if(obj != null) UnityEngine.Object.DestroyImmediate(obj); }
+        public void Transition(StateLink link) {
             if(link == null) return;
-            if(Owner == null) return;
+            if(_owner == null) return;
             link.transitionCount++;
-            Owner.Transition(link.stateID);
+            _owner.Transition(link.stateID);
         }
         public void RebuildStateLinkCache() {
             _linkCache ??= new List<StateLink>();
@@ -65,9 +74,11 @@ namespace MornLib {
             return _linkCache;
         }
         public IEnumerable<T> GetBehaviours<T>() where T : StateBehaviour {
-            if(Owner == null) yield break;
-            foreach(var s in Owner.GetComponents<StateBehaviour>()) {
-                if(s is T t) yield return t;
+            if(_owner == null) yield break;
+            foreach(var n in _owner.Nodes) {
+                foreach(var b in n.behaviours) {
+                    if(b is T t) yield return t;
+                }
             }
         }
     }
