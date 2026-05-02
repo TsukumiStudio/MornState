@@ -137,9 +137,16 @@ namespace MornLib {
                 ? meta.name
                 : behaviours.Count > 0 ? behaviours[0].GetType().Name : $"State {stateID}";
             var node = new Node {
-                title = displayName,
                 userData = stateID,
             };
+            var titleLabel = node.titleContainer.Q<Label>("title-label");
+            if(titleLabel != null) titleLabel.style.display = DisplayStyle.None;
+            var titleField = new TextField { value = displayName };
+            titleField.style.flexGrow = 1;
+            titleField.style.marginLeft = 4;
+            titleField.style.marginRight = 4;
+            titleField.RegisterValueChangedCallback(e => RenameNode(stateID,e.newValue,node));
+            node.titleContainer.Insert(0,titleField);
             var pos = meta != null ? meta.graphPosition : new Vector2(40 + index % 5 * 280,40 + index / 5 * 280);
             node.SetPosition(new Rect(pos.x,pos.y,260,180));
             var inPort = node.InstantiatePort(Orientation.Horizontal,Direction.Input,Port.Capacity.Multi,typeof(StateBehaviour));
@@ -151,9 +158,6 @@ namespace MornLib {
             inspector.style.paddingRight = 6;
             inspector.style.paddingTop = 4;
             inspector.style.paddingBottom = 4;
-            var nameField = new TextField("Name") { value = displayName };
-            nameField.RegisterValueChangedCallback(e => RenameNode(stateID,e.newValue,node));
-            inspector.Add(nameField);
             foreach(var s in behaviours) AddBehaviourSection(inspector,node,s);
             var addBtn = new Button(() => OpenAddBehaviourSearch(stateID)) { text = "+ Add Behaviour" };
             addBtn.style.marginTop = 4;
@@ -223,7 +227,6 @@ namespace MornLib {
             if(meta == null) return;
             Undo.RecordObject(_target,"Rename State");
             meta.name = newName;
-            node.title = newName;
             EditorUtility.SetDirty(_target);
         }
         private void RemoveBehaviour(StateBehaviour state) {
