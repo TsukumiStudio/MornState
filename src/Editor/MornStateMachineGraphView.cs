@@ -73,9 +73,7 @@ namespace MornLib {
                 var winLocal = window != null ? ctx.screenMousePosition - window.position.position : ctx.screenMousePosition;
                 var viewLocal = this.WorldToLocal(winLocal);
                 var graphPos = contentViewContainer.WorldToLocal(this.LocalToWorld(viewLocal));
-                var provider = ScriptableObject.CreateInstance<MornStateSearchProvider>();
-                provider.Setup(this,graphPos);
-                SearchWindow.Open(new SearchWindowContext(ctx.screenMousePosition),provider);
+                CreateEmptyStateAt(graphPos);
             };
         }
         public void LoadStateMachine(MornStateMachine fsm) {
@@ -84,11 +82,15 @@ namespace MornLib {
             _nodeByID.Clear();
             if(fsm == null) return;
             fsm.CollectStates();
+            var allIDs = new HashSet<int>();
+            foreach(var pair in fsm.StatesByID) allIDs.Add(pair.Key);
+            foreach(var n in fsm.Nodes) allIDs.Add(n.id);
             var groupIndex = 0;
-            foreach(var pair in fsm.StatesByID) {
-                var node = CreateNode(fsm,pair.Key,pair.Value,groupIndex++);
+            foreach(var id in allIDs) {
+                var behaviours = fsm.StatesByID.TryGetValue(id,out var list) ? list : new List<StateBehaviour>();
+                var node = CreateNode(fsm,id,behaviours,groupIndex++);
                 AddElement(node);
-                _nodeByID[pair.Key] = node;
+                _nodeByID[id] = node;
             }
             foreach(var pair in fsm.StatesByID) {
                 if(_nodeByID.TryGetValue(pair.Key,out var fromNode) == false) continue;
@@ -196,20 +198,25 @@ namespace MornLib {
         public override void BuildContextualMenu(ContextualMenuPopulateEvent evt) {
             if(_target != null) {
                 var localPos = evt.mousePosition;
-                evt.menu.AppendAction("Create State...",_ => OpenSearchAtLocal(localPos));
+                evt.menu.AppendAction("Create State",_ => {
+                    var graphPos = contentViewContainer.WorldToLocal(this.LocalToWorld(localPos));
+                    CreateEmptyStateAt(graphPos);
+                });
                 evt.menu.AppendSeparator();
             }
             base.BuildContextualMenu(evt);
         }
-        public void OpenSearchAtLocal(Vector2 viewLocalPos) {
+        public void CreateEmptyStateAt(Vector2 graphPos) {
             if(_target == null) return;
-            var graphPos = contentViewContainer.WorldToLocal(this.LocalToWorld(viewLocalPos));
-            var provider = ScriptableObject.CreateInstance<MornStateSearchProvider>();
-            provider.Setup(this,graphPos);
-            var window = EditorWindow.focusedWindow;
-            var worldPos = this.LocalToWorld(viewLocalPos);
-            var screenPos = window != null ? window.position.position + worldPos : worldPos;
-            SearchWindow.Open(new SearchWindowContext(screenPos),provider);
+            var newID = AllocateUniqueStateID();
+            Undo.RegisterCompleteObjectUndo(_target,"Create State");
+            _target.RegisterNode(new MornStateMachine.StateNode {
+                id = newID,
+                name = $"State {newID}",
+                graphPosition = graphPos,
+            });
+            EditorUtility.SetDirty(_target);
+            LoadStateMachine(_target);
         }
         public void OpenAddBehaviourSearch(int stateID) {
             if(_target == null) return;
