@@ -69,6 +69,9 @@ namespace MornLib {
             Insert(0,bg);
             bg.StretchToParentSize();
             graphViewChanged += OnGraphViewChanged;
+            serializeGraphElements = SerializeForClipboard;
+            unserializeAndPaste = UnserializeAndPaste;
+            canPasteSerializedData = data => string.IsNullOrEmpty(data) == false && data.StartsWith("{");
             RegisterCallback<AttachToPanelEvent>(_ => EditorApplication.update += OnEditorUpdate);
             RegisterCallback<DetachFromPanelEvent>(_ => EditorApplication.update -= OnEditorUpdate);
             nodeCreationRequest = ctx => {
@@ -361,6 +364,69 @@ namespace MornLib {
                 graphPosition = graphPos,
             });
             if(_target.startStateID == 0) _target.startStateID = newID;
+            EditorUtility.SetDirty(_target);
+            LoadStateMachine(_target);
+        }
+        [System.Serializable]
+        private class ClipboardData {
+            public List<NodeEntry> nodes = new();
+        }
+        [System.Serializable]
+        private class NodeEntry {
+            public string name;
+            public Vector2 graphPosition;
+            public List<BehaviourEntry> behaviours = new();
+        }
+        [System.Serializable]
+        private class BehaviourEntry {
+            public string typeName;
+            public string json;
+        }
+        private string SerializeForClipboard(System.Collections.Generic.IEnumerable<GraphElement> elements) {
+            var data = new ClipboardData();
+            if(_target == null) return JsonUtility.ToJson(data);
+            foreach(var elem in elements) {
+                if(elem is Node n && n.userData is int stateID) {
+                    var meta = _target.FindNode(stateID);
+                    if(meta == null) continue;
+                    var entry = new NodeEntry { name = meta.name,graphPosition = meta.graphPosition };
+                    if(_target.StatesByID.TryGetValue(stateID,out var list)) {
+                        foreach(var b in list) {
+                            entry.behaviours.Add(new BehaviourEntry {
+                                typeName = b.GetType().AssemblyQualifiedName,
+                                json = EditorJsonUtility.ToJson(b),
+                            });
+                        }
+                    }
+                    data.nodes.Add(entry);
+                }
+            }
+            return JsonUtility.ToJson(data);
+        }
+        private void UnserializeAndPaste(string operationName,string serializedData) {
+            if(_target == null) return;
+            ClipboardData data;
+            try { data = JsonUtility.FromJson<ClipboardData>(serializedData); }
+            catch { return; }
+            if(data == null || data.nodes == null) return;
+            Undo.RegisterCompleteObjectUndo(_target,operationName);
+            ClearSelection();
+            foreach(var entry in data.nodes) {
+                var newID = AllocateUniqueStateID();
+                _target.RegisterNode(new MornStateMachine.StateNode {
+                    id = newID,
+                    name = entry.name,
+                    graphPosition = entry.graphPosition + new Vector2(40,40),
+                });
+                foreach(var b in entry.behaviours) {
+                    var type = System.Type.GetType(b.typeName);
+                    if(type == null) continue;
+                    var comp = (StateBehaviour)Undo.AddComponent(_target.gameObject,type);
+                    EditorJsonUtility.FromJsonOverwrite(b.json,comp);
+                    comp.StateID = newID;
+                    EditorUtility.SetDirty(comp);
+                }
+            }
             EditorUtility.SetDirty(_target);
             LoadStateMachine(_target);
         }
