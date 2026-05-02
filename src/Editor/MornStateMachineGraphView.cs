@@ -314,6 +314,14 @@ namespace MornLib {
             EditorUtility.SetDirty(_target);
         }
         public override void BuildContextualMenu(ContextualMenuPopulateEvent evt) {
+            if(_target != null && evt.target is VisualElement ve) {
+                var node = ve.GetFirstAncestorOfType<Node>();
+                if(node != null && node.userData is int sid) {
+                    evt.menu.AppendAction("Set as Start State",_ => SetAsStart(sid),
+                        _ => sid == _target.startStateID ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
+                    evt.menu.AppendSeparator();
+                }
+            }
             base.BuildContextualMenu(evt);
         }
         public void OpenAddBehaviourSearch(int stateID) {
@@ -332,6 +340,7 @@ namespace MornLib {
                 name = $"State {newID}",
                 graphPosition = graphPos,
             });
+            if(_target.startStateID == 0) _target.startStateID = newID;
             EditorUtility.SetDirty(_target);
             LoadStateMachine(_target);
         }
@@ -347,8 +356,16 @@ namespace MornLib {
                 name = type.Name,
                 graphPosition = graphPos,
             });
+            if(_target.startStateID == 0) _target.startStateID = newID;
             EditorUtility.SetDirty(_target);
             LoadStateMachine(_target);
+        }
+        public void SetAsStart(int stateID) {
+            if(_target == null) return;
+            Undo.RecordObject(_target,"Set Start State");
+            _target.startStateID = stateID;
+            EditorUtility.SetDirty(_target);
+            UpdateHighlights();
         }
         public void AddBehaviourToState(System.Type type,int stateID) {
             if(_target == null) return;
