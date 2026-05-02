@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using UnityEditor;
 using UnityEditor.Experimental.GraphView;
@@ -206,7 +207,10 @@ namespace MornLib {
             if(pos == Vector2.zero) pos = new Vector2(40 + index % 5 * 280,40 + index / 5 * 280);
             node.SetPosition(new Rect(pos.x,pos.y,260,180));
             var inPort = node.InstantiatePort(Orientation.Horizontal,Direction.Input,Port.Capacity.Multi,typeof(StateBehaviour));
-            inPort.portName = "in";
+            inPort.portName = "";
+            inPort.style.visibility = Visibility.Hidden;
+            inPort.style.width = 0;
+            inPort.style.height = 0;
             node.inputContainer.Add(inPort);
             var inspector = new VisualElement();
             inspector.style.minWidth = 240;
@@ -274,7 +278,7 @@ namespace MornLib {
             }
             parent.Add(section);
         }
-        private static VisualElement CreateOutputPortRow(Node node,StateBehaviour state,StateLink link,string fieldName) {
+        private VisualElement CreateOutputPortRow(Node node,StateBehaviour state,StateLink link,string fieldName) {
             var row = new VisualElement();
             row.style.flexDirection = FlexDirection.Row;
             row.style.justifyContent = Justify.FlexEnd;
@@ -288,8 +292,53 @@ namespace MornLib {
             var port = node.InstantiatePort(Orientation.Horizontal,Direction.Output,Port.Capacity.Single,typeof(StateBehaviour));
             port.portName = "";
             port.userData = (state,link);
+            if(port.edgeConnector != null) port.RemoveManipulator(port.edgeConnector);
+            port.AddManipulator(new EdgeConnector<Edge>(new NodeDropConnectorListener(this)));
             row.Add(port);
             return row;
+        }
+        public void ConnectFromOutputToNode(Port outputPort,Node targetNode) {
+            if(outputPort == null || targetNode == null || _target == null) return;
+            if(outputPort.userData is not System.ValueTuple<StateBehaviour,StateLink> tup) return;
+            if(targetNode.userData is not int targetID) return;
+            var input = targetNode.inputContainer.Q<Port>();
+            if(input == null) return;
+            Undo.RegisterCompleteObjectUndo(_target,"Connect Edge");
+            tup.Item2.stateID = targetID;
+            EditorUtility.SetDirty(_target);
+            foreach(var existing in edges.ToList()) {
+                if(existing.output == outputPort) RemoveElement(existing);
+            }
+            var edge = outputPort.ConnectTo(input);
+            edge.userData = tup;
+            AddElement(edge);
+        }
+        private class NodeDropConnectorListener : IEdgeConnectorListener {
+            private readonly MornStateMachineGraphView _view;
+            public NodeDropConnectorListener(MornStateMachineGraphView view) { _view = view; }
+            public void OnDropOutsidePort(Edge edge,Vector2 position) {
+                var picked = new List<VisualElement>();
+                _view.panel.PickAll(position,picked);
+                Node target = null;
+                foreach(var elem in picked) {
+                    for(VisualElement cur = elem;cur != null;cur = cur.parent) {
+                        if(cur is Node n) { target = n; break; }
+                    }
+                    if(target != null) break;
+                }
+                if(target == null) return;
+                _view.ConnectFromOutputToNode(edge.output,target);
+            }
+            public void OnDrop(GraphView graphView,Edge edge) {
+                var change = new GraphViewChange { edgesToCreate = new List<Edge> { edge } };
+                ((MornStateMachineGraphView)graphView).InvokeGraphViewChanged(change);
+            }
+        }
+        public void InvokeGraphViewChanged(GraphViewChange change) {
+            OnGraphViewChanged(change);
+            if(change.edgesToCreate != null) {
+                foreach(var e in change.edgesToCreate) AddElement(e);
+            }
         }
         private void RenameNode(int stateID,string newName) {
             if(_target == null) return;
