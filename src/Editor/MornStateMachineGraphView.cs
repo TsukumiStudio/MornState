@@ -129,23 +129,20 @@ namespace MornLib {
             foreach(var f in state.GetType().GetFields(refFlags)) {
                 if(f.FieldType == typeof(StateLink)) skipNames.Add(f.Name);
             }
-            var imgui = new IMGUIContainer(() => {
-                if(state == null) return;
-                so.Update();
-                var prop = so.GetIterator();
-                prop.NextVisible(true);
-                while(prop.NextVisible(false)) {
-                    if(skipNames.Contains(prop.name)) continue;
-                    EditorGUILayout.PropertyField(prop,true);
-                }
-                so.ApplyModifiedProperties();
-            });
-            imgui.style.minWidth = 240;
-            imgui.style.paddingLeft = 6;
-            imgui.style.paddingRight = 6;
-            imgui.style.paddingTop = 4;
-            imgui.style.paddingBottom = 4;
-            node.extensionContainer.Add(imgui);
+            var inspector = new VisualElement();
+            inspector.style.minWidth = 240;
+            inspector.style.paddingLeft = 6;
+            inspector.style.paddingRight = 6;
+            inspector.style.paddingTop = 4;
+            inspector.style.paddingBottom = 4;
+            var prop = so.GetIterator();
+            prop.NextVisible(true);
+            while(prop.NextVisible(false)) {
+                if(skipNames.Contains(prop.name)) continue;
+                inspector.Add(new PropertyField(prop.Copy()));
+            }
+            inspector.Bind(so);
+            node.extensionContainer.Add(inspector);
             node.RefreshExpandedState();
             node.RefreshPorts();
             return node;
@@ -218,14 +215,47 @@ namespace MornLib {
                 }
             }
             if(change.elementsToRemove != null) {
+                var removedStates = new List<StateBehaviour>();
                 foreach(var elem in change.elementsToRemove) {
-                    if(elem is Edge e && e.userData is System.ValueTuple<StateBehaviour,StateLink> tup) {
-                        tup.Item2.stateID = 0;
-                        EditorUtility.SetDirty(tup.Item1);
+                    switch(elem) {
+                        case Edge e when e.userData is System.ValueTuple<StateBehaviour,StateLink> tup:
+                            tup.Item2.stateID = 0;
+                            EditorUtility.SetDirty(tup.Item1);
+                            break;
+                        case Node n when n.userData is StateBehaviour state:
+                            removedStates.Add(state);
+                            break;
                     }
+                }
+                if(removedStates.Count > 0) {
+                    foreach(var state in removedStates) {
+                        if(state == null) continue;
+                        ClearLinksTargeting(state.StateID);
+                        if(_nodeByID.TryGetValue(state.StateID,out _)) _nodeByID.Remove(state.StateID);
+                        Undo.DestroyObjectImmediate(state.gameObject);
+                    }
+                    EditorApplication.delayCall += () => LoadStateMachine(_target);
                 }
             }
             return change;
+        }
+        private void ClearLinksTargeting(int stateID) {
+            if(_target == null) return;
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            foreach(var s in _target.GetComponentsInChildren<StateBehaviour>(true)) {
+                if(s.Owner != _target) continue;
+                var dirty = false;
+                foreach(var f in s.GetType().GetFields(flags)) {
+                    if(f.FieldType != typeof(StateLink)) continue;
+                    if(f.GetValue(s) is not StateLink link) continue;
+                    if(link == null) continue;
+                    if(link.stateID == stateID) {
+                        link.stateID = 0;
+                        dirty = true;
+                    }
+                }
+                if(dirty) EditorUtility.SetDirty(s);
+            }
         }
         private static StateLink AssignFirstEmptyLink(StateBehaviour state,int targetID) {
             const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
