@@ -315,10 +315,14 @@ namespace MornLib {
         }
         public override void BuildContextualMenu(ContextualMenuPopulateEvent evt) {
             if(_target != null && evt.target is VisualElement ve) {
-                var node = ve.GetFirstAncestorOfType<Node>();
+                Node node = null;
+                for(VisualElement cur = ve;cur != null;cur = cur.parent) {
+                    if(cur is Node n) { node = n; break; }
+                }
                 if(node != null && node.userData is int sid) {
-                    evt.menu.AppendAction("Set as Start State",_ => SetAsStart(sid),
-                        _ => sid == _target.startStateID ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
+                    var captured = sid;
+                    evt.menu.AppendAction("Set as Start State",_ => SetAsStart(captured),
+                        _ => captured == _target.startStateID ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
                     evt.menu.AppendSeparator();
                 }
             }
