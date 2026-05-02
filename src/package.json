@@ -1,6 +1,6 @@
 {
   "name": "com.tsukumistudio.mornstate",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "displayName": "MornState",
   "description": "Arbor 互換シグネチャを保ちつつ、UniTask 連携の軽量 FSM を提供するライブラリ。StateBehaviour / StateLink / MornStateMachine のコア API + 簡易 GraphView エディタを含む。",
   "unity": "6000.0",

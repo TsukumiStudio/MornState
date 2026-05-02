@@ -119,6 +119,55 @@ namespace MornLib {
             node.RefreshPorts();
             return node;
         }
+        public override void BuildContextualMenu(ContextualMenuPopulateEvent evt) {
+            if(_target != null) {
+                var screenPos = evt.localMousePosition;
+                var graphPos = contentViewContainer.WorldToLocal(screenPos);
+                var types = new List<System.Type>();
+                foreach(var asm in System.AppDomain.CurrentDomain.GetAssemblies()) {
+                    System.Type[] all;
+                    try { all = asm.GetTypes(); } catch { continue; }
+                    foreach(var t in all) {
+                        if(t.IsAbstract) continue;
+                        if(typeof(StateBehaviour).IsAssignableFrom(t) == false) continue;
+                        types.Add(t);
+                    }
+                }
+                types.Sort((a,b) => string.Compare(a.FullName,b.FullName,System.StringComparison.Ordinal));
+                foreach(var type in types) {
+                    var t = type;
+                    var path = string.IsNullOrEmpty(t.Namespace) ? $"Create/{t.Name}" : $"Create/{t.Namespace.Replace('.','/')}/{t.Name}";
+                    evt.menu.AppendAction(path,_ => CreateStateNode(t,graphPos));
+                }
+                evt.menu.AppendSeparator();
+            }
+            base.BuildContextualMenu(evt);
+        }
+        private void CreateStateNode(System.Type type,Vector2 graphPos) {
+            if(_target == null) return;
+            var go = new GameObject(type.Name);
+            Undo.RegisterCreatedObjectUndo(go,$"Create {type.Name}");
+            Undo.SetTransformParent(go.transform,_target.transform,$"Create {type.Name}");
+            go.transform.localPosition = Vector3.zero;
+            var comp = (StateBehaviour)Undo.AddComponent(go,type);
+            comp.StateID = AllocateUniqueStateID();
+            EditorUtility.SetDirty(comp);
+            LoadStateMachine(_target);
+            if(_nodeByID.TryGetValue(comp.StateID,out var node)) {
+                node.SetPosition(new Rect(graphPos.x,graphPos.y,200,100));
+            }
+        }
+        private int AllocateUniqueStateID() {
+            var existing = new HashSet<int>();
+            foreach(var s in _target.GetComponentsInChildren<StateBehaviour>(true)) {
+                if(s.Owner == _target) existing.Add(s.StateID);
+            }
+            var rng = new System.Random();
+            while(true) {
+                var id = rng.Next(1,int.MaxValue);
+                if(existing.Contains(id) == false) return id;
+            }
+        }
         public override List<Port> GetCompatiblePorts(Port startPort,NodeAdapter nodeAdapter) {
             var compatible = new List<Port>();
             ports.ForEach(p => {
