@@ -13,22 +13,48 @@ namespace MornLib {
             win.titleContent = new GUIContent("MornState Graph");
             win.Show();
         }
+        public static void OpenFor(MornStateMachine fsm) {
+            var win = GetWindow<MornStateMachineGraphWindow>();
+            win.titleContent = new GUIContent("MornState Graph");
+            win._pinned = fsm;
+            win.Show();
+            win.Focus();
+            win.Reload();
+        }
         private MornStateMachineGraphView _view;
+        private Label _hint;
+        private MornStateMachine _pinned;
         private void OnEnable() {
             _view = new MornStateMachineGraphView();
             _view.style.flexGrow = 1;
             rootVisualElement.Add(_view);
-            Selection.selectionChanged += OnSelectionChanged;
-            OnSelectionChanged();
+            _hint = new Label("MornStateMachine を Hierarchy で選択するか、Inspector の Open Graph ボタンを押してください。");
+            _hint.style.position = Position.Absolute;
+            _hint.style.left = 12;
+            _hint.style.top = 12;
+            _hint.style.color = new Color(0.8f,0.8f,0.8f);
+            rootVisualElement.Add(_hint);
+            var toolbar = new Toolbar();
+            var refreshBtn = new ToolbarButton(Reload) { text = "Refresh" };
+            toolbar.Add(refreshBtn);
+            var unpinBtn = new ToolbarButton(() => { _pinned = null; Reload(); }) { text = "Unpin" };
+            toolbar.Add(unpinBtn);
+            rootVisualElement.Insert(0,toolbar);
+            Selection.selectionChanged += Reload;
+            Reload();
         }
         private void OnDisable() {
-            Selection.selectionChanged -= OnSelectionChanged;
+            Selection.selectionChanged -= Reload;
         }
-        private void OnSelectionChanged() {
+        private void Reload() {
             if(_view == null) return;
-            var go = Selection.activeGameObject;
-            var fsm = go != null ? go.GetComponentInParent<MornStateMachine>(true) : null;
+            var fsm = _pinned;
+            if(fsm == null) {
+                var go = Selection.activeGameObject;
+                if(go != null) fsm = go.GetComponentInParent<MornStateMachine>(true);
+            }
             _view.LoadStateMachine(fsm);
+            if(_hint != null) _hint.style.display = fsm == null ? DisplayStyle.Flex : DisplayStyle.None;
         }
     }
     public class MornStateMachineGraphView : GraphView {
