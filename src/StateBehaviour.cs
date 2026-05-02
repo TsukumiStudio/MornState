@@ -14,6 +14,7 @@ namespace MornLib {
         }
         public MornStateMachine Owner {
             get {
+                if(_ownerCache == null) _ownerCache = GetComponent<MornStateMachine>();
                 if(_ownerCache == null) _ownerCache = GetComponentInParent<MornStateMachine>(true);
                 return _ownerCache;
             }
@@ -65,8 +66,7 @@ namespace MornLib {
         }
         public IEnumerable<T> GetBehaviours<T>() where T : StateBehaviour {
             if(Owner == null) yield break;
-            foreach(var s in Owner.GetComponentsInChildren<StateBehaviour>(true)) {
-                if(s.Owner != Owner) continue;
+            foreach(var s in Owner.GetComponents<StateBehaviour>()) {
                 if(s is T t) yield return t;
             }
         }

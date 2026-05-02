@@ -7,11 +7,20 @@ using UnityEngine;
 using UnityEngine.UIElements;
 namespace MornLib {
     public class MornStateSearchProvider : ScriptableObject,ISearchWindowProvider {
+        private enum Mode { CreateState,AddBehaviour }
         private MornStateMachineGraphView _view;
         private Vector2 _graphPos;
+        private int _stateID;
+        private Mode _mode;
         public void Setup(MornStateMachineGraphView view,Vector2 graphPos) {
             _view = view;
             _graphPos = graphPos;
+            _mode = Mode.CreateState;
+        }
+        public void SetupAddBehaviour(MornStateMachineGraphView view,int stateID) {
+            _view = view;
+            _stateID = stateID;
+            _mode = Mode.AddBehaviour;
         }
         public List<SearchTreeEntry> CreateSearchTree(SearchWindowContext context) {
             var types = new List<Type>();
@@ -60,7 +69,8 @@ namespace MornLib {
         public bool OnSelectEntry(SearchTreeEntry entry,SearchWindowContext context) {
             if(entry.userData is Type t == false) return false;
             if(_view == null) return false;
-            _view.CreateStateAt(t,_graphPos);
+            if(_mode == Mode.AddBehaviour) _view.AddBehaviourToState(t,_stateID);
+            else _view.CreateStateAt(t,_graphPos);
             return true;
         }
         private class Node {

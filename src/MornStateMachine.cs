@@ -1,21 +1,33 @@
+using System;
 using System.Collections.Generic;
 using UnityEngine;
 namespace MornLib {
     public class MornStateMachine : MornStateMachineInternal {
-        private readonly Dictionary<int,StateBehaviour> _states = new();
-        private StateBehaviour _current;
+        [Serializable]
+        public class StateNode {
+            public int id;
+            public string name;
+            public Vector2 graphPosition;
+        }
+        [SerializeField] private List<StateNode> _nodes = new();
+        private readonly Dictionary<int,List<StateBehaviour>> _statesByID = new();
+        private readonly List<StateBehaviour> _currentBehaviours = new();
         private int _pendingTransition = NotPending;
         private const int NotPending = int.MinValue;
-        public StateBehaviour CurrentState => _current;
+        public IReadOnlyList<StateNode> Nodes => _nodes;
+        public IReadOnlyDictionary<int,List<StateBehaviour>> StatesByID => _statesByID;
+        public IReadOnlyList<StateBehaviour> CurrentBehaviours => _currentBehaviours;
         private void Awake() {
             CollectStates();
-            foreach(var state in _states.Values) state.RebuildStateLinkCache();
+            foreach(var pair in _statesByID) {
+                foreach(var b in pair.Value) b.RebuildStateLinkCache();
+            }
         }
         private void Start() {
             if(_playOnStart) Transition(_startStateID);
         }
         private void Update() {
-            if(_current != null) _current.InternalUpdate();
+            foreach(var b in _currentBehaviours) b.InternalUpdate();
             FlushPending();
         }
         private void LateUpdate() {
@@ -29,21 +41,38 @@ namespace MornLib {
             if(_pendingTransition == NotPending) return;
             var nextID = _pendingTransition;
             _pendingTransition = NotPending;
-            if(_states.TryGetValue(nextID,out var next) == false) {
+            if(_statesByID.TryGetValue(nextID,out var nextList) == false) {
                 Debug.LogWarning($"[MornState] StateID {nextID} not found on {name}.",this);
                 return;
             }
-            _current?.InternalEnd();
-            _current = next;
-            _current.InternalBegin();
-        }
-        private void CollectStates() {
-            _states.Clear();
-            foreach(var state in GetComponentsInChildren<StateBehaviour>(true)) {
-                if(state.Owner != this) continue;
-                _states[state.StateID] = state;
+            foreach(var b in _currentBehaviours) b.InternalEnd();
+            _currentBehaviours.Clear();
+            foreach(var b in nextList) {
+                _currentBehaviours.Add(b);
+                b.InternalBegin();
             }
         }
-        public IReadOnlyDictionary<int,StateBehaviour> States => _states;
+        public void CollectStates() {
+            _statesByID.Clear();
+            foreach(var s in GetComponents<StateBehaviour>()) {
+                if(s.StateID == 0) continue;
+                if(_statesByID.TryGetValue(s.StateID,out var list) == false) {
+                    list = new List<StateBehaviour>();
+                    _statesByID[s.StateID] = list;
+                }
+                list.Add(s);
+            }
+        }
+        public StateNode FindNode(int id) {
+            foreach(var n in _nodes) if(n.id == id) return n;
+            return null;
+        }
+        public void RegisterNode(StateNode node) {
+            if(FindNode(node.id) != null) return;
+            _nodes.Add(node);
+        }
+        public void UnregisterNode(int id) {
+            for(var i = _nodes.Count - 1;i >= 0;i--) if(_nodes[i].id == id) _nodes.RemoveAt(i);
+        }
     }
 }
