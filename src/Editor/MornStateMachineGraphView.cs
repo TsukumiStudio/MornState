@@ -136,6 +136,9 @@ namespace MornLib {
             inspector.style.paddingRight = 6;
             inspector.style.paddingTop = 4;
             inspector.style.paddingBottom = 4;
+            var nameField = new TextField("Name") { value = displayName };
+            nameField.RegisterValueChangedCallback(e => RenameNode(stateID,e.newValue,node));
+            inspector.Add(nameField);
             foreach(var s in behaviours) AddBehaviourSection(inspector,s);
             var addBtn = new Button(() => OpenAddBehaviourSearch(stateID)) { text = "+ Add Behaviour" };
             addBtn.style.marginTop = 4;
@@ -179,6 +182,15 @@ namespace MornLib {
             section.Bind(so);
             parent.Add(section);
         }
+        private void RenameNode(int stateID,string newName,Node node) {
+            if(_target == null) return;
+            var meta = _target.FindNode(stateID);
+            if(meta == null) return;
+            Undo.RecordObject(_target,"Rename State");
+            meta.name = newName;
+            node.title = newName;
+            EditorUtility.SetDirty(_target);
+        }
         private void RemoveBehaviour(StateBehaviour state) {
             if(state == null) return;
             var owner = state.Owner;
@@ -196,14 +208,6 @@ namespace MornLib {
             EditorUtility.SetDirty(_target);
         }
         public override void BuildContextualMenu(ContextualMenuPopulateEvent evt) {
-            if(_target != null) {
-                var localPos = evt.mousePosition;
-                evt.menu.AppendAction("Create State",_ => {
-                    var graphPos = contentViewContainer.WorldToLocal(this.LocalToWorld(localPos));
-                    CreateEmptyStateAt(graphPos);
-                });
-                evt.menu.AppendSeparator();
-            }
             base.BuildContextualMenu(evt);
         }
         public void CreateEmptyStateAt(Vector2 graphPos) {
