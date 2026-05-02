@@ -145,6 +145,14 @@ namespace MornLib {
             titleField.style.flexGrow = 1;
             titleField.style.marginLeft = 4;
             titleField.style.marginRight = 4;
+            titleField.style.marginTop = 0;
+            titleField.style.marginBottom = 0;
+            var titleInput = titleField.Q(TextField.textInputUssName);
+            if(titleInput != null) {
+                titleInput.style.paddingTop = 0;
+                titleInput.style.paddingBottom = 0;
+                titleInput.style.minHeight = 18;
+            }
             titleField.RegisterValueChangedCallback(e => RenameNode(stateID,e.newValue,node));
             node.titleContainer.Insert(0,titleField);
             var pos = meta != null ? meta.graphPosition : new Vector2(40 + index % 5 * 280,40 + index / 5 * 280);
