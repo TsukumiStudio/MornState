@@ -39,10 +39,12 @@ namespace MornLib {
             toolbar.Add(refreshBtn);
             rootVisualElement.Insert(0,toolbar);
             Selection.selectionChanged += Reload;
+            Undo.undoRedoPerformed += Reload;
             Reload();
         }
         private void OnDisable() {
             Selection.selectionChanged -= Reload;
+            Undo.undoRedoPerformed -= Reload;
         }
         private void Reload() {
             if(_view == null) return;
@@ -95,23 +97,39 @@ namespace MornLib {
             foreach(var pair in fsm.StatesByID) {
                 if(_nodeByID.TryGetValue(pair.Key,out var fromNode) == false) continue;
                 foreach(var s in pair.Value) {
-                    foreach(var link in EnumerateStateLinks(s)) {
+                    foreach(var (_,link) in EnumerateStateLinkFields(s)) {
+                        if(link == null || link.stateID == 0) continue;
                         if(_nodeByID.TryGetValue(link.stateID,out var toNode) == false) continue;
-                        var fromPort = (Port)fromNode.outputContainer[0];
-                        var toPort = (Port)toNode.inputContainer[0];
-                        var edge = fromPort.ConnectTo(toPort);
+                        var outPort = FindOutputPortFor(fromNode,s,link);
+                        var inPort = FindInputPort(toNode);
+                        if(outPort == null || inPort == null) continue;
+                        var edge = outPort.ConnectTo(inPort);
                         edge.userData = (s,link);
                         AddElement(edge);
                     }
                 }
             }
         }
-        private static IEnumerable<StateLink> EnumerateStateLinks(StateBehaviour state) {
+        private static IEnumerable<(string fieldName,StateLink link)> EnumerateStateLinkFields(StateBehaviour state) {
             const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
             foreach(var f in state.GetType().GetFields(flags)) {
                 if(f.FieldType != typeof(StateLink)) continue;
-                if(f.GetValue(state) is StateLink link && link != null) yield return link;
+                if(f.GetValue(state) is StateLink link) yield return (f.Name,link);
             }
+        }
+        private static Port FindInputPort(Node node) {
+            return node.inputContainer.childCount > 0 ? node.inputContainer[0] as Port : null;
+        }
+        private static Port FindOutputPortFor(Node node,StateBehaviour state,StateLink link) {
+            Port found = null;
+            node.Query<Port>().ForEach(p => {
+                if(found != null) return;
+                if(p.direction != Direction.Output) return;
+                if(p.userData is System.ValueTuple<StateBehaviour,StateLink> tup && tup.Item1 == state && tup.Item2 == link) {
+                    found = p;
+                }
+            });
+            return found;
         }
         private Node CreateNode(MornStateMachine fsm,int stateID,List<StateBehaviour> behaviours,int index) {
             var meta = fsm.FindNode(stateID);
@@ -127,9 +145,6 @@ namespace MornLib {
             var inPort = node.InstantiatePort(Orientation.Horizontal,Direction.Input,Port.Capacity.Multi,typeof(StateBehaviour));
             inPort.portName = "in";
             node.inputContainer.Add(inPort);
-            var outPort = node.InstantiatePort(Orientation.Horizontal,Direction.Output,Port.Capacity.Multi,typeof(StateBehaviour));
-            outPort.portName = "out";
-            node.outputContainer.Add(outPort);
             var inspector = new VisualElement();
             inspector.style.minWidth = 240;
             inspector.style.paddingLeft = 6;
@@ -139,7 +154,7 @@ namespace MornLib {
             var nameField = new TextField("Name") { value = displayName };
             nameField.RegisterValueChangedCallback(e => RenameNode(stateID,e.newValue,node));
             inspector.Add(nameField);
-            foreach(var s in behaviours) AddBehaviourSection(inspector,s);
+            foreach(var s in behaviours) AddBehaviourSection(inspector,node,s);
             var addBtn = new Button(() => OpenAddBehaviourSearch(stateID)) { text = "+ Add Behaviour" };
             addBtn.style.marginTop = 4;
             inspector.Add(addBtn);
@@ -149,7 +164,7 @@ namespace MornLib {
             node.RegisterCallback<GeometryChangedEvent>(_ => SaveNodePosition(stateID,node));
             return node;
         }
-        private void AddBehaviourSection(VisualElement parent,StateBehaviour state) {
+        private void AddBehaviourSection(VisualElement parent,Node node,StateBehaviour state) {
             var section = new VisualElement();
             section.style.marginBottom = 4;
             section.style.borderTopWidth = 1;
@@ -180,7 +195,27 @@ namespace MornLib {
                 section.Add(new PropertyField(prop.Copy()));
             }
             section.Bind(so);
+            foreach(var (fieldName,link) in EnumerateStateLinkFields(state)) {
+                section.Add(CreateOutputPortRow(node,state,link,fieldName));
+            }
             parent.Add(section);
+        }
+        private static VisualElement CreateOutputPortRow(Node node,StateBehaviour state,StateLink link,string fieldName) {
+            var row = new VisualElement();
+            row.style.flexDirection = FlexDirection.Row;
+            row.style.justifyContent = Justify.FlexEnd;
+            row.style.alignItems = Align.Center;
+            row.style.marginTop = 2;
+            var label = new Label(string.IsNullOrEmpty(link.name) ? fieldName : link.name);
+            label.style.flexGrow = 1;
+            label.style.unityTextAlign = TextAnchor.MiddleRight;
+            label.style.marginRight = 4;
+            row.Add(label);
+            var port = node.InstantiatePort(Orientation.Horizontal,Direction.Output,Port.Capacity.Single,typeof(StateBehaviour));
+            port.portName = "";
+            port.userData = (state,link);
+            row.Add(port);
+            return row;
         }
         private void RenameNode(int stateID,string newName,Node node) {
             if(_target == null) return;
@@ -210,6 +245,13 @@ namespace MornLib {
         public override void BuildContextualMenu(ContextualMenuPopulateEvent evt) {
             base.BuildContextualMenu(evt);
         }
+        public void OpenAddBehaviourSearch(int stateID) {
+            if(_target == null) return;
+            var provider = ScriptableObject.CreateInstance<MornStateSearchProvider>();
+            provider.SetupAddBehaviour(this,stateID);
+            var screenPos = GUIUtility.GUIToScreenPoint(Event.current != null ? Event.current.mousePosition : Vector2.zero);
+            SearchWindow.Open(new SearchWindowContext(screenPos),provider);
+        }
         public void CreateEmptyStateAt(Vector2 graphPos) {
             if(_target == null) return;
             var newID = AllocateUniqueStateID();
@@ -222,19 +264,11 @@ namespace MornLib {
             EditorUtility.SetDirty(_target);
             LoadStateMachine(_target);
         }
-        public void OpenAddBehaviourSearch(int stateID) {
-            if(_target == null) return;
-            var provider = ScriptableObject.CreateInstance<MornStateSearchProvider>();
-            provider.SetupAddBehaviour(this,stateID);
-            var screenPos = GUIUtility.GUIToScreenPoint(Event.current != null ? Event.current.mousePosition : Vector2.zero);
-            SearchWindow.Open(new SearchWindowContext(screenPos),provider);
-        }
         public void CreateStateAt(System.Type type,Vector2 graphPos) {
             if(_target == null) return;
             var newID = AllocateUniqueStateID();
-            var go = _target.gameObject;
             Undo.RegisterCompleteObjectUndo(_target,"Create State");
-            var comp = (StateBehaviour)Undo.AddComponent(go,type);
+            var comp = (StateBehaviour)Undo.AddComponent(_target.gameObject,type);
             comp.StateID = newID;
             EditorUtility.SetDirty(comp);
             _target.RegisterNode(new MornStateMachine.StateNode {
@@ -247,8 +281,8 @@ namespace MornLib {
         }
         public void AddBehaviourToState(System.Type type,int stateID) {
             if(_target == null) return;
-            var go = _target.gameObject;
-            var comp = (StateBehaviour)Undo.AddComponent(go,type);
+            Undo.RegisterCompleteObjectUndo(_target,"Add Behaviour");
+            var comp = (StateBehaviour)Undo.AddComponent(_target.gameObject,type);
             comp.StateID = stateID;
             EditorUtility.SetDirty(comp);
             LoadStateMachine(_target);
@@ -277,32 +311,33 @@ namespace MornLib {
             if(_target == null) return change;
             if(change.edgesToCreate != null) {
                 foreach(var edge in change.edgesToCreate) {
-                    var fromID = edge.output.node.userData is int fid ? fid : 0;
-                    var toID = edge.input.node.userData is int tid ? tid : 0;
-                    if(fromID == 0 || toID == 0) continue;
-                    if(_target.StatesByID.TryGetValue(fromID,out var list) == false) continue;
-                    foreach(var b in list) {
-                        var assigned = AssignFirstEmptyLink(b,toID);
-                        if(assigned == null) continue;
-                        edge.userData = (b,assigned);
-                        break;
+                    if(edge.output.userData is System.ValueTuple<StateBehaviour,StateLink> tup
+                       && edge.input.node.userData is int targetID) {
+                        Undo.RegisterCompleteObjectUndo(tup.Item1,"Connect Edge");
+                        tup.Item2.stateID = targetID;
+                        EditorUtility.SetDirty(tup.Item1);
+                        edge.userData = tup;
                     }
                 }
             }
             if(change.elementsToRemove != null) {
                 var removedIDs = new List<int>();
+                var dirtyEdgeBehaviours = new HashSet<StateBehaviour>();
                 foreach(var elem in change.elementsToRemove) {
                     switch(elem) {
-                        case Edge e when e.userData is System.ValueTuple<StateBehaviour,StateLink> tup:
+                        case Edge e when e.output != null && e.output.userData is System.ValueTuple<StateBehaviour,StateLink> tup:
+                            Undo.RegisterCompleteObjectUndo(tup.Item1,"Disconnect Edge");
                             tup.Item2.stateID = 0;
-                            EditorUtility.SetDirty(tup.Item1);
+                            dirtyEdgeBehaviours.Add(tup.Item1);
                             break;
-                        case Node n when n.userData is int stateID:
-                            removedIDs.Add(stateID);
+                        case Node n when n.userData is int sid:
+                            removedIDs.Add(sid);
                             break;
                     }
                 }
+                foreach(var b in dirtyEdgeBehaviours) EditorUtility.SetDirty(b);
                 if(removedIDs.Count > 0) {
+                    Undo.RegisterCompleteObjectUndo(_target,"Remove State");
                     foreach(var id in removedIDs) {
                         ClearLinksTargeting(id);
                         if(_target.StatesByID.TryGetValue(id,out var list)) {
@@ -327,26 +362,13 @@ namespace MornLib {
                     if(f.GetValue(s) is not StateLink link) continue;
                     if(link == null) continue;
                     if(link.stateID == stateID) {
+                        Undo.RegisterCompleteObjectUndo(s,"Clear Link");
                         link.stateID = 0;
                         dirty = true;
                     }
                 }
                 if(dirty) EditorUtility.SetDirty(s);
             }
-        }
-        private static StateLink AssignFirstEmptyLink(StateBehaviour state,int targetID) {
-            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-            foreach(var f in state.GetType().GetFields(flags)) {
-                if(f.FieldType != typeof(StateLink)) continue;
-                if(f.GetValue(state) is not StateLink link) continue;
-                if(link == null) continue;
-                if(link.stateID == 0) {
-                    link.stateID = targetID;
-                    EditorUtility.SetDirty(state);
-                    return link;
-                }
-            }
-            return null;
         }
     }
 }
