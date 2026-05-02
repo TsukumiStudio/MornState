@@ -114,12 +114,18 @@ namespace MornLib {
             outPort.portName = state.GetType().Name;
             node.outputContainer.Add(outPort);
             var so = new SerializedObject(state);
+            var skipNames = new HashSet<string>();
+            const BindingFlags refFlags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            foreach(var f in state.GetType().GetFields(refFlags)) {
+                if(f.FieldType == typeof(StateLink)) skipNames.Add(f.Name);
+            }
             var imgui = new IMGUIContainer(() => {
                 if(state == null) return;
                 so.Update();
                 var prop = so.GetIterator();
                 prop.NextVisible(true);
                 while(prop.NextVisible(false)) {
+                    if(skipNames.Contains(prop.name)) continue;
                     EditorGUILayout.PropertyField(prop,true);
                 }
                 so.ApplyModifiedProperties();
