@@ -8,5 +8,6 @@ namespace MornLib {
             get => _stateID;
             set => _stateID = value;
         }
+        public bool IsConnected => _stateID != 0;
     }
 }

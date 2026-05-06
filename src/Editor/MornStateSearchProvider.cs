@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using UnityEditor;
 using UnityEditor.Experimental.GraphView;
 using UnityEngine;
@@ -8,6 +9,8 @@ using UnityEngine.UIElements;
 namespace MornLib {
     public class MornStateSearchProvider : ScriptableObject,ISearchWindowProvider {
         private enum Mode { CreateState,AddBehaviour }
+        private const string SessionKeyAddBehaviour = "MornState.SearchFilter.AddBehaviour";
+        private const string SessionKeyCreateState = "MornState.SearchFilter.CreateState";
         private MornStateMachineGraphView _view;
         private Vector2 _graphPos;
         private int _stateID;
@@ -22,6 +25,7 @@ namespace MornLib {
             _stateID = stateID;
             _mode = Mode.AddBehaviour;
         }
+        public string SavedFilter => SessionState.GetString(_mode == Mode.AddBehaviour ? SessionKeyAddBehaviour : SessionKeyCreateState,"");
         public List<SearchTreeEntry> CreateSearchTree(SearchWindowContext context) {
             var types = new List<Type>();
             foreach(var asm in AppDomain.CurrentDomain.GetAssemblies()) {
@@ -67,11 +71,38 @@ namespace MornLib {
             }
         }
         public bool OnSelectEntry(SearchTreeEntry entry,SearchWindowContext context) {
+            SaveCurrentFilter();
             if(entry.userData is Type t == false) return false;
             if(_view == null) return false;
             if(_mode == Mode.AddBehaviour) _view.AddBehaviourToState(t,_stateID);
             else _view.CreateStateAt(t,_graphPos);
             return true;
+        }
+        public static void ApplyFilterToOpenWindow(string saved) {
+            if(string.IsNullOrEmpty(saved)) return;
+            var win = GetActiveSearchWindow();
+            if(win == null) return;
+            var t = win.GetType();
+            var search = t.GetField("m_Search",BindingFlags.NonPublic | BindingFlags.Instance);
+            var delayed = t.GetField("m_DelayedSearch",BindingFlags.NonPublic | BindingFlags.Instance);
+            if(search == null) return;
+            search.SetValue(win,saved);
+            if(delayed != null) delayed.SetValue(win,saved);
+            var rebuild = t.GetMethod("RebuildSearch",BindingFlags.NonPublic | BindingFlags.Instance);
+            if(rebuild != null) rebuild.Invoke(win,null);
+            win.Repaint();
+        }
+        private void SaveCurrentFilter() {
+            var win = GetActiveSearchWindow();
+            if(win == null) return;
+            var field = win.GetType().GetField("m_Search",BindingFlags.NonPublic | BindingFlags.Instance);
+            if(field == null) return;
+            var text = field.GetValue(win) as string ?? "";
+            SessionState.SetString(_mode == Mode.AddBehaviour ? SessionKeyAddBehaviour : SessionKeyCreateState,text);
+        }
+        private static EditorWindow GetActiveSearchWindow() {
+            var arr = Resources.FindObjectsOfTypeAll(typeof(SearchWindow));
+            return arr.Length == 0 ? null : arr[arr.Length - 1] as EditorWindow;
         }
         private class Node {
             public string Name;

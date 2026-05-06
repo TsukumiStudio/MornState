@@ -35,8 +35,21 @@ namespace MornLib
         {
             var target = ResolveTarget(behaviourProperty);
             if(target == null) return;
+            if(HasCustomAttributeMethods(target.GetType()) == false) return;
             var ownerObject = behaviourProperty.serializedObject.targetObject;
             parent.Add(new IMGUIContainer(() => MornEditorDrawerUtil.HandleCustomAttributesForObject(target,ownerObject)));
+        }
+
+        private static bool HasCustomAttributeMethods(System.Type type)
+        {
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy;
+            foreach(var m in type.GetMethods(flags))
+            {
+                if(m.GetParameters().Length != 0) continue;
+                if(m.GetCustomAttribute<ButtonAttribute>() != null) return true;
+                if(m.GetCustomAttribute<OnInspectorGUIAttribute>() != null) return true;
+            }
+            return false;
         }
 
         private static bool IsConnection(SerializedProperty prop)

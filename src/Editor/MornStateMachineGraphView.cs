@@ -78,6 +78,7 @@ namespace MornLib {
         private readonly Dictionary<int,Vector2> _layoutPositions = new();
         private readonly List<EdgeRecord> _edgeRecords = new();
         private VisualElement _edgesLayer;
+        private VisualElement _edgesLayerFront;
         private struct EdgeRecord {
             public Port outputPort;
             public Node targetNode;
@@ -106,8 +107,23 @@ namespace MornLib {
                     _edgesLayer.SendToBack();
                 }
             }).Every(100);
+            _edgesLayerFront = new VisualElement();
+            _edgesLayerFront.style.position = Position.Absolute;
+            _edgesLayerFront.style.left = 0;
+            _edgesLayerFront.style.top = 0;
+            _edgesLayerFront.style.width = 100000;
+            _edgesLayerFront.style.height = 100000;
+            _edgesLayerFront.pickingMode = PickingMode.Ignore;
+            _edgesLayerFront.generateVisualContent += DrawEdgeStubsFront;
+            contentViewContainer.Add(_edgesLayerFront);
+            _edgesLayerFront.schedule.Execute(() => {
+                if(_edgesLayerFront.parent != null) _edgesLayerFront.BringToFront();
+            }).Every(100);
             graphViewChanged += OnGraphViewChanged;
             RegisterCallback<PointerMoveEvent>(OnEdgePointerMove,TrickleDown.TrickleDown);
+            RegisterCallback<PointerMoveEvent>(e => UpdateBehaviourDragHover(e.position),TrickleDown.TrickleDown);
+            RegisterCallback<PointerUpEvent>(e => EndBehaviourDrag(e.position),TrickleDown.TrickleDown);
+            RegisterCallback<MouseUpEvent>(e => EndBehaviourDrag(e.mousePosition),TrickleDown.TrickleDown);
             RegisterCallback<PointerUpEvent>(_ => StopEdgeDrag(),TrickleDown.TrickleDown);
             RegisterCallback<MouseMoveEvent>(OnEdgeDragMove,TrickleDown.TrickleDown);
             RegisterCallback<MouseUpEvent>(_ => StopEdgeDrag(),TrickleDown.TrickleDown);
@@ -127,6 +143,9 @@ namespace MornLib {
         }
         private bool _hasLoadedOnce;
         private bool _isClearingForReload;
+        private bool _edgeLayoutPending;
+        private int _hoveredNodeID;
+        private readonly HashSet<int> _hoveredRelatedIDs = new();
         private readonly Dictionary<int,string> _nodeSig = new();
         private static string ComputeNodeSig(MornStateMachine.StateNode meta) {
             if(meta.behaviours == null) return "";
@@ -162,7 +181,7 @@ namespace MornLib {
                     }
                 }
             }
-            _edgesLayer.MarkDirtyRepaint();
+            _edgesLayer.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
         }
         public void ForceFullReload() {
             _hasLoadedOnce = false;
@@ -177,8 +196,11 @@ namespace MornLib {
                 foreach(var meta in fsm.Nodes) {
                     if(_nodeByID.TryGetValue(meta.id,out var node) == false) continue;
                     var pos = positionsFast.TryGetValue(meta.id,out var p) ? p : new Vector2(40,40);
-                    var cur = new Vector2(node.transform.position.x,node.transform.position.y);
+                    var cur = GetAbsolutePosition(node);
                     if(Vector2.Distance(cur,pos) > 0.5f) {
+                        node.SetPosition(new Rect(pos.x,pos.y,0,0));
+                        var off = cur - pos;
+                        node.transform.position = new Vector3(off.x,off.y,0);
                         _animations[node] = new AnimState { start = cur,end = pos,elapsed = 0f,duration = 0.25f };
                     }
                 }
@@ -187,26 +209,28 @@ namespace MornLib {
                 return;
             }
             _isClearingForReload = true;
+            _edgeLayoutPending = true;
             var oldPositions = new Dictionary<int,Vector2>();
             foreach(var pair in _nodeByID) {
-                var tp = pair.Value.transform.position;
-                oldPositions[pair.Key] = new Vector2(tp.x,tp.y);
+                oldPositions[pair.Key] = GetAbsolutePosition(pair.Value);
             }
             _target = fsm;
             graphElements.ForEach(RemoveElement);
             _nodeByID.Clear();
+            _sectionsByNode.Clear();
             _animations.Clear();
             _portRowInfo.Clear();
             _edgeRecords.Clear();
             _layoutPositions.Clear();
             _nodeSig.Clear();
-            _edgesLayer?.MarkDirtyRepaint();
+            _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
             if(fsm == null) return;
             fsm.ReinjectOwners();
             var positions = ComputeAutoLayout(fsm);
             _layoutPositions.Clear();
             foreach(var kv in positions) _layoutPositions[kv.Key] = kv.Value;
             var animate = _hasLoadedOnce;
+            var pendingLayoutCount = new[] { fsm.Nodes.Count };
             foreach(var meta in fsm.Nodes) {
                 var pos = positions.TryGetValue(meta.id,out var p) ? p : new Vector2(40,40);
                 Vector2 initialPos;
@@ -221,8 +245,24 @@ namespace MornLib {
                 AddElement(node);
                 _edgesLayer.SendToBack();
                 _nodeByID[meta.id] = node;
-                node.transform.position = new Vector3(initialPos.x,initialPos.y,0);
-                node.RegisterCallback<GeometryChangedEvent>(_ => _edgesLayer?.MarkDirtyRepaint());
+                var restPos = animate ? pos : initialPos;
+                node.SetPosition(new Rect(restPos.x,restPos.y,0,0));
+                var offset = initialPos - restPos;
+                node.transform.position = new Vector3(offset.x,offset.y,0);
+                node.style.visibility = Visibility.Hidden;
+                EventCallback<GeometryChangedEvent> firstLayout = null;
+                firstLayout = _ => {
+                    node.style.visibility = Visibility.Visible;
+                    node.UnregisterCallback(firstLayout);
+                    pendingLayoutCount[0]--;
+                    if(pendingLayoutCount[0] <= 0) {
+                        _edgeLayoutPending = false;
+                        _edgesLayer?.MarkDirtyRepaint();
+                        _edgesLayerFront?.MarkDirtyRepaint();
+                    }
+                };
+                node.RegisterCallback(firstLayout);
+                node.RegisterCallback<GeometryChangedEvent>(_ => { _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint(); });
                 if(animate && Vector2.Distance(initialPos,pos) > 0.5f) {
                     _animations[node] = new AnimState { start = initialPos,end = pos,elapsed = 0f,duration = 0.25f };
                 }
@@ -233,25 +273,35 @@ namespace MornLib {
             RebuildEdgeRecords(fsm);
             UpdateHighlights();
             _isClearingForReload = false;
+            if(pendingLayoutCount[0] <= 0) _edgeLayoutPending = false;
         }
         private void DrawCustomEdges(MeshGenerationContext ctx) {
+            if(_edgeLayoutPending) return;
             var p = ctx.painter2D;
             p.lineWidth = 2.5f;
             p.strokeColor = new Color(0.85f,0.85f,0.85f,0.65f);
-            foreach(var rec in _edgeRecords) {
+            var backEdgeIndex = ComputeBackEdgeIndices();
+            for(var ri = 0;ri < _edgeRecords.Count;ri++) {
+                var rec = _edgeRecords[ri];
                 if(rec.outputPort == null || rec.targetNode == null) continue;
                 if(_isDraggingEdge && rec.outputPort == _draggingPort) continue;
                 var sourceNode = rec.outputPort.GetFirstAncestorOfType<Node>();
                 if(sourceNode == null) continue;
+                var sourceID = sourceNode.userData is int ssid ? ssid : 0;
+                var emphasized = _hoveredNodeID != 0 && sourceID == _hoveredNodeID;
+                var dimmed = _hoveredNodeID != 0 && emphasized == false;
+                p.strokeColor = dimmed
+                    ? new Color(0.85f,0.85f,0.85f,0.18f)
+                    : new Color(0.85f,0.85f,0.85f,emphasized ? 1f : 0.65f);
+                p.lineWidth = emphasized ? 3.2f : 2.5f;
                 var sourceCenter = sourceNode.worldBound.center;
                 var portCenter = rec.outputPort.worldBound.center;
                 var sourcePortOnLeft = portCenter.x < sourceCenter.x;
-                var portEdgeWorld = sourcePortOnLeft
-                    ? new Vector2(rec.outputPort.worldBound.x,portCenter.y)
-                    : new Vector2(rec.outputPort.worldBound.xMax,portCenter.y);
+                var portEdgeWorld = ResolvePortAnchor(rec.outputPort,sourcePortOnLeft,portCenter.y);
                 var isSelfLoop = sourceNode == rec.targetNode;
                 Vector2 inWorld;
                 bool toReceivesFromRight;
+                var isBackEdge = false;
                 if(isSelfLoop) {
                     toReceivesFromRight = sourcePortOnLeft == false;
                     var targetEdgeY = rec.targetNode.worldBound.center.y;
@@ -264,10 +314,30 @@ namespace MornLib {
                     inWorld = toReceivesFromRight
                         ? new Vector2(rec.targetNode.worldBound.xMax,rec.targetNode.worldBound.center.y)
                         : new Vector2(rec.targetNode.worldBound.x,rec.targetNode.worldBound.center.y);
+                    isBackEdge = IsBackEdgeBetween(sourceCenter,targetCenter);
+                }
+                if(isBackEdge) {
+                    inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMax - BackEdgeCornerInset);
+                } else if(isSelfLoop == false) {
+                    inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMin + BackEdgeCornerInset);
                 }
                 var fromLocal = _edgesLayer.WorldToLocal(portEdgeWorld);
                 var toLocal = _edgesLayer.WorldToLocal(inWorld);
-                DrawCurveWithArrow(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight);
+                if(isSelfLoop) {
+                    DrawBezierEdge(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight);
+                } else if(isBackEdge && backEdgeIndex.TryGetValue(ri,out var laneIdx)) {
+                    var pathYMinWorld = Mathf.Min(portEdgeWorld.y,inWorld.y);
+                    var pathYMaxWorld = Mathf.Max(portEdgeWorld.y,inWorld.y);
+                    var corridor = ComputeMaxBottomBetween(sourceNode,rec.targetNode,pathYMinWorld,pathYMaxWorld);
+                    if(corridor.hasObstacle) {
+                        var laneY = corridor.laneLocalY + BackEdgeBaseDepth + laneIdx * BackEdgeStepDepth;
+                        DrawBackEdgeL(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,laneY,GetBackEdgeStub(laneIdx));
+                    } else {
+                        DrawForwardEdgeStubCurve(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,BackEdgeStub);
+                    }
+                } else {
+                    DrawForwardEdgeStubCurve(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,ForwardEdgeStub);
+                }
             }
             if(_hasDragGhost && _draggingPort != null) {
                 var sourceNode = _draggingPort.GetFirstAncestorOfType<Node>();
@@ -290,13 +360,172 @@ namespace MornLib {
                         toReceivesFromRightDrag = targetIsLeftOfSource;
                     } else {
                         toLocalDrag = _dragGhostPos;
-                        toReceivesFromRightDrag = false;
+                        toReceivesFromRightDrag = dragsLeft;
                     }
-                    DrawCurveWithArrow(p,_edgesLayer.WorldToLocal(portEdgeWorld),toLocalDrag,dragsLeft,toReceivesFromRightDrag);
+                    DrawBezierEdge(p,_edgesLayer.WorldToLocal(portEdgeWorld),toLocalDrag,dragsLeft,toReceivesFromRightDrag);
                 }
             }
         }
-        private void DrawCurveWithArrow(UnityEngine.UIElements.Painter2D p,Vector2 fromLocal,Vector2 toLocal,bool fromOnLeft,bool toReceivesFromRight) {
+        private void DrawEdgeStubsFront(MeshGenerationContext ctx) {
+            if(_edgeLayoutPending) return;
+            var p = ctx.painter2D;
+            p.lineWidth = 2.5f;
+            p.strokeColor = new Color(0.85f,0.85f,0.85f,0.65f);
+            var backEdgeIndex = ComputeBackEdgeIndices();
+            for(var ri = 0;ri < _edgeRecords.Count;ri++) {
+                var rec = _edgeRecords[ri];
+                if(rec.outputPort == null || rec.targetNode == null) continue;
+                if(_isDraggingEdge && rec.outputPort == _draggingPort) continue;
+                var sourceNode = rec.outputPort.GetFirstAncestorOfType<Node>();
+                if(sourceNode == null || sourceNode == rec.targetNode) continue;
+                var sourceID = sourceNode.userData is int ssid ? ssid : 0;
+                var emphasized = _hoveredNodeID != 0 && sourceID == _hoveredNodeID;
+                var dimmed = _hoveredNodeID != 0 && emphasized == false;
+                p.strokeColor = dimmed
+                    ? new Color(0.85f,0.85f,0.85f,0.18f)
+                    : new Color(0.85f,0.85f,0.85f,emphasized ? 1f : 0.65f);
+                p.lineWidth = emphasized ? 3.2f : 2.5f;
+                var sourceCenter = sourceNode.worldBound.center;
+                var portCenter = rec.outputPort.worldBound.center;
+                var sourcePortOnLeft = portCenter.x < sourceCenter.x;
+                var portEdgeWorld = ResolvePortAnchor(rec.outputPort,sourcePortOnLeft,portCenter.y);
+                var targetCenter = rec.targetNode.worldBound.center;
+                var toReceivesFromRight = targetCenter.x < sourceCenter.x;
+                var inWorld = toReceivesFromRight
+                    ? new Vector2(rec.targetNode.worldBound.xMax,rec.targetNode.worldBound.center.y)
+                    : new Vector2(rec.targetNode.worldBound.x,rec.targetNode.worldBound.center.y);
+                var isBackEdge = IsBackEdgeBetween(sourceCenter,targetCenter);
+                if(isBackEdge) inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMax - BackEdgeCornerInset);
+                else inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMin + BackEdgeCornerInset);
+                var fromLocal = _edgesLayerFront.WorldToLocal(portEdgeWorld);
+                var toLocal = _edgesLayerFront.WorldToLocal(inWorld);
+                if(isBackEdge) {
+                    var pathYMin = Mathf.Min(portEdgeWorld.y,inWorld.y);
+                    var pathYMax = Mathf.Max(portEdgeWorld.y,inWorld.y);
+                    var corridor = ComputeMaxBottomBetween(sourceNode,rec.targetNode,pathYMin,pathYMax);
+                    var stub = (corridor.hasObstacle && backEdgeIndex.TryGetValue(ri,out var idx))
+                        ? GetBackEdgeStub(idx)
+                        : BackEdgeStub;
+                    DrawBackEdgeStubsFront(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,stub);
+                } else {
+                    DrawForwardEdgeStubsFront(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,ForwardEdgeStub);
+                }
+            }
+        }
+        private (float laneLocalY,bool hasObstacle) ComputeMaxBottomBetween(Node sourceNode,Node targetNode,float pathYMinWorld,float pathYMaxWorld) {
+            var minX = Mathf.Min(sourceNode.worldBound.xMax,targetNode.worldBound.xMax);
+            var maxX = Mathf.Max(sourceNode.worldBound.xMax,targetNode.worldBound.xMax);
+            var maxBottomWorld = float.NegativeInfinity;
+            var hasObstacle = false;
+            foreach(var pair in _nodeByID) {
+                var n = pair.Value;
+                if(n == sourceNode || n == targetNode) continue;
+                var cx = n.worldBound.center.x;
+                if(cx <= minX || cx >= maxX) continue;
+                if(n.worldBound.yMax < pathYMinWorld || n.worldBound.yMin > pathYMaxWorld) continue;
+                hasObstacle = true;
+                if(n.worldBound.yMax > maxBottomWorld) maxBottomWorld = n.worldBound.yMax;
+            }
+            if(hasObstacle == false) maxBottomWorld = Mathf.Max(sourceNode.worldBound.yMax,targetNode.worldBound.yMax);
+            var local = _edgesLayer.WorldToLocal(new Vector2(0,maxBottomWorld)).y;
+            return (local,hasObstacle);
+        }
+        private static Vector2 ResolvePortAnchor(Port port,bool onLeftSide,float fallbackY) {
+            var connector = port.Q("connector");
+            if(connector != null) {
+                var c = connector.worldBound.center;
+                return new Vector2(c.x,c.y);
+            }
+            return onLeftSide
+                ? new Vector2(port.worldBound.x,fallbackY)
+                : new Vector2(port.worldBound.xMax,fallbackY);
+        }
+        private const float BackEdgeBaseDepth = 40f;
+        private const float BackEdgeStepDepth = 28f;
+        private const float BackEdgeDetectThreshold = 40f;
+        private const float BackEdgeCornerInset = 12f;
+        private const float BackEdgeStub = 32f;
+        private const float BackEdgeStubStep = 12f;
+        private const float ForwardEdgeStub = 16f;
+        private static float GetBackEdgeStub(int laneIdx) => BackEdgeStub + laneIdx * BackEdgeStubStep;
+        private static bool IsBackEdgeBetween(Vector2 sourceCenter,Vector2 targetCenter) {
+            return targetCenter.x < sourceCenter.x - BackEdgeDetectThreshold;
+        }
+        private Dictionary<int,int> ComputeBackEdgeIndices() {
+            var result = new Dictionary<int,int>();
+            var lanes = new List<(int recIndex,float minX,float maxX,float corridorWidth)>();
+            for(var ri = 0;ri < _edgeRecords.Count;ri++) {
+                var rec = _edgeRecords[ri];
+                if(rec.outputPort == null || rec.targetNode == null) continue;
+                var sourceNode = rec.outputPort.GetFirstAncestorOfType<Node>();
+                if(sourceNode == null || sourceNode == rec.targetNode) continue;
+                if(IsBackEdgeBetween(sourceNode.worldBound.center,rec.targetNode.worldBound.center) == false) continue;
+                var minX = Mathf.Min(sourceNode.worldBound.xMax,rec.targetNode.worldBound.xMax);
+                var maxX = Mathf.Max(sourceNode.worldBound.xMax,rec.targetNode.worldBound.xMax);
+                lanes.Add((ri,minX,maxX,maxX - minX));
+            }
+            lanes.Sort((a,b) => a.corridorWidth.CompareTo(b.corridorWidth));
+            for(var i = 0;i < lanes.Count;i++) result[lanes[i].recIndex] = i;
+            return result;
+        }
+        private void DrawBackEdgeL(UnityEngine.UIElements.Painter2D p,Vector2 fromLocal,Vector2 toLocal,bool fromOnLeft,bool toReceivesFromRight,float laneY,float stub) {
+            var fromOutDirX = fromOnLeft ? -1f : 1f;
+            var toInDirX = toReceivesFromRight ? 1f : -1f;
+            var stub1 = new Vector2(fromLocal.x + fromOutDirX * stub,fromLocal.y);
+            var corner1 = new Vector2(stub1.x,laneY);
+            var stub2 = new Vector2(toLocal.x + toInDirX * stub,toLocal.y);
+            var corner2 = new Vector2(stub2.x,laneY);
+            p.BeginPath();
+            p.MoveTo(stub1);
+            p.LineTo(corner1);
+            p.LineTo(corner2);
+            p.LineTo(stub2);
+            p.Stroke();
+        }
+        private void DrawBackEdgeStubsFront(UnityEngine.UIElements.Painter2D p,Vector2 fromLocal,Vector2 toLocal,bool fromOnLeft,bool toReceivesFromRight,float stub) {
+            var fromOutDirX = fromOnLeft ? -1f : 1f;
+            var toInDirX = toReceivesFromRight ? 1f : -1f;
+            var stub1 = new Vector2(fromLocal.x + fromOutDirX * stub,fromLocal.y);
+            var stub2 = new Vector2(toLocal.x + toInDirX * stub,toLocal.y);
+            p.BeginPath();
+            p.MoveTo(fromLocal);
+            p.LineTo(stub1);
+            p.MoveTo(stub2);
+            p.LineTo(toLocal);
+            p.Stroke();
+            var arrowDir = (toLocal - stub2).normalized;
+            if(arrowDir.sqrMagnitude < 0.001f) arrowDir = new Vector2(toReceivesFromRight ? -1 : 1,0);
+            DrawArrowHead(p,toLocal,arrowDir);
+        }
+        private void DrawForwardEdgeStubCurve(UnityEngine.UIElements.Painter2D p,Vector2 fromLocal,Vector2 toLocal,bool fromOnLeft,bool toReceivesFromRight,float stub) {
+            var fromOutDirX = fromOnLeft ? -1f : 1f;
+            var toInDirX = toReceivesFromRight ? 1f : -1f;
+            var stub1 = new Vector2(fromLocal.x + fromOutDirX * stub,fromLocal.y);
+            var stub2 = new Vector2(toLocal.x + toInDirX * stub,toLocal.y);
+            var dx = Mathf.Max(40f,Mathf.Abs(stub2.x - stub1.x) * 0.5f);
+            var c1 = new Vector2(stub1.x + fromOutDirX * dx,stub1.y);
+            var c2 = new Vector2(stub2.x + toInDirX * dx,stub2.y);
+            p.BeginPath();
+            p.MoveTo(stub1);
+            p.BezierCurveTo(c1,c2,stub2);
+            p.Stroke();
+        }
+        private void DrawForwardEdgeStubsFront(UnityEngine.UIElements.Painter2D p,Vector2 fromLocal,Vector2 toLocal,bool fromOnLeft,bool toReceivesFromRight,float stub) {
+            var fromOutDirX = fromOnLeft ? -1f : 1f;
+            var toInDirX = toReceivesFromRight ? 1f : -1f;
+            var stub1 = new Vector2(fromLocal.x + fromOutDirX * stub,fromLocal.y);
+            var stub2 = new Vector2(toLocal.x + toInDirX * stub,toLocal.y);
+            p.BeginPath();
+            p.MoveTo(fromLocal);
+            p.LineTo(stub1);
+            p.MoveTo(stub2);
+            p.LineTo(toLocal);
+            p.Stroke();
+            var arrowDir = (toLocal - stub2).normalized;
+            if(arrowDir.sqrMagnitude < 0.001f) arrowDir = new Vector2(toReceivesFromRight ? -1 : 1,0);
+            DrawArrowHead(p,toLocal,arrowDir);
+        }
+        private void DrawBezierEdge(UnityEngine.UIElements.Painter2D p,Vector2 fromLocal,Vector2 toLocal,bool fromOnLeft,bool toReceivesFromRight) {
             var dx = Mathf.Max(50f,Mathf.Abs(toLocal.x - fromLocal.x) * 0.5f);
             var fromOutDir = fromOnLeft ? -1f : 1f;
             var toInDir = toReceivesFromRight ? 1f : -1f;
@@ -308,9 +537,11 @@ namespace MornLib {
             p.Stroke();
             var arrowDir = (toLocal - c2).normalized;
             if(arrowDir.sqrMagnitude < 0.001f) arrowDir = new Vector2(toReceivesFromRight ? 1 : -1,0);
+            DrawArrowHead(p,toLocal,arrowDir);
+        }
+        private void DrawArrowHead(UnityEngine.UIElements.Painter2D p,Vector2 tip,Vector2 arrowDir) {
             var perp = new Vector2(-arrowDir.y,arrowDir.x);
-            var tip = toLocal;
-            var basePt = toLocal - arrowDir * 8f;
+            var basePt = tip - arrowDir * 8f;
             var left = basePt + perp * 4f;
             var right = basePt - perp * 4f;
             p.fillColor = new Color(0.85f,0.85f,0.85f,0.65f);
@@ -338,6 +569,11 @@ namespace MornLib {
         }
         private struct AnimState { public Vector2 start; public Vector2 end; public float elapsed; public float duration; }
         private readonly Dictionary<Node,AnimState> _animations = new();
+        private static Vector2 GetAbsolutePosition(Node node) {
+            var p = node.GetPosition().position;
+            var t = node.transform.position;
+            return new Vector2(p.x + t.x,p.y + t.y);
+        }
         private double _lastAnimTime;
         private void TickAnimations() {
             if(_animations.Count == 0) { _lastAnimTime = EditorApplication.timeSinceStartup; return; }
@@ -353,12 +589,13 @@ namespace MornLib {
                 var t = Mathf.Clamp01(a.elapsed / a.duration);
                 var eased = 1f - Mathf.Pow(1f - t,3f);
                 var cur = Vector2.Lerp(a.start,a.end,eased);
-                node.transform.position = new Vector3(cur.x,cur.y,0);
+                var off = cur - a.end;
+                node.transform.position = new Vector3(off.x,off.y,0);
                 if(t >= 1f) finished.Add(node);
                 else _animations[node] = a;
             }
             foreach(var n in finished) _animations.Remove(n);
-            _edgesLayer?.MarkDirtyRepaint();
+            _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
         }
         private int _lastCurrentSnapshot = int.MinValue;
         private void OnEditorUpdate() {
@@ -370,7 +607,112 @@ namespace MornLib {
             }
             PollDragGhost();
             ReconcilePortSides();
-            _edgesLayer?.MarkDirtyRepaint();
+            UpdateRuntimeBadges();
+            _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
+        }
+        private readonly Dictionary<(int from,int to),Label> _edgeBadges = new();
+        private Vector2 ComputeEdgeBadgeLocal(EdgeRecord rec,Node sourceNode,int recIndex,Dictionary<int,int> backIdx) {
+            var sourceCenter = sourceNode.worldBound.center;
+            var portCenter = rec.outputPort.worldBound.center;
+            var sourcePortOnLeft = portCenter.x < sourceCenter.x;
+            var portEdgeWorld = ResolvePortAnchor(rec.outputPort,sourcePortOnLeft,portCenter.y);
+            var isSelfLoop = sourceNode == rec.targetNode;
+            if(isSelfLoop) {
+                var c = (sourceCenter + rec.targetNode.worldBound.center) * 0.5f;
+                return _edgesLayerFront.WorldToLocal(c);
+            }
+            var targetCenter = rec.targetNode.worldBound.center;
+            var toReceivesFromRight = targetCenter.x < sourceCenter.x;
+            var inWorld = toReceivesFromRight
+                ? new Vector2(rec.targetNode.worldBound.xMax,targetCenter.y)
+                : new Vector2(rec.targetNode.worldBound.x,targetCenter.y);
+            var isBackEdge = IsBackEdgeBetween(sourceCenter,targetCenter);
+            if(isBackEdge) inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMax - BackEdgeCornerInset);
+            else inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMin + BackEdgeCornerInset);
+            var fromOutDirX = sourcePortOnLeft ? -1f : 1f;
+            var toInDirX = toReceivesFromRight ? 1f : -1f;
+            var stubLen = ForwardEdgeStub;
+            var corridorObstacle = false;
+            var laneY = 0f;
+            if(isBackEdge && backIdx.TryGetValue(recIndex,out var laneIdxLocal)) {
+                var pathYMin = Mathf.Min(portEdgeWorld.y,inWorld.y);
+                var pathYMax = Mathf.Max(portEdgeWorld.y,inWorld.y);
+                var corridor = ComputeMaxBottomBetween(sourceNode,rec.targetNode,pathYMin,pathYMax);
+                corridorObstacle = corridor.hasObstacle;
+                if(corridorObstacle) {
+                    laneY = corridor.laneLocalY + BackEdgeBaseDepth + laneIdxLocal * BackEdgeStepDepth;
+                    stubLen = GetBackEdgeStub(laneIdxLocal);
+                } else {
+                    stubLen = BackEdgeStub;
+                }
+            }
+            var fromLocal = _edgesLayerFront.WorldToLocal(portEdgeWorld);
+            var toLocal = _edgesLayerFront.WorldToLocal(inWorld);
+            var stub1 = new Vector2(fromLocal.x + fromOutDirX * stubLen,fromLocal.y);
+            var stub2 = new Vector2(toLocal.x + toInDirX * stubLen,toLocal.y);
+            if(isBackEdge && corridorObstacle) {
+                return new Vector2((stub1.x + stub2.x) * 0.5f,laneY);
+            }
+            return (stub1 + stub2) * 0.5f;
+        }
+        private void UpdateRuntimeBadges() {
+            var play = Application.isPlaying && _target != null;
+            foreach(var pair in _nodeByID) {
+                var badge = pair.Value.Q<Label>("morn-state-badge");
+                if(badge == null) continue;
+                if(play && _target.StateEnterCounts.TryGetValue(pair.Key,out var count) && count > 0) {
+                    badge.text = count.ToString();
+                    badge.style.display = DisplayStyle.Flex;
+                } else {
+                    badge.style.display = DisplayStyle.None;
+                }
+            }
+            if(play == false) {
+                foreach(var b in _edgeBadges.Values) b.style.display = DisplayStyle.None;
+                return;
+            }
+            var seen = new HashSet<(int,int)>();
+            var backIdx = ComputeBackEdgeIndices();
+            for(var ri = 0;ri < _edgeRecords.Count;ri++) {
+                var rec = _edgeRecords[ri];
+                if(rec.outputPort == null || rec.targetNode == null) continue;
+                var sourceNode = rec.outputPort.GetFirstAncestorOfType<Node>();
+                if(sourceNode == null || sourceNode.userData is not int fromID) continue;
+                if(rec.targetNode.userData is not int toID) continue;
+                var key = (fromID,toID);
+                if(_target.TransitionCounts.TryGetValue(key,out var c) == false || c <= 0) continue;
+                seen.Add(key);
+                if(_edgeBadges.TryGetValue(key,out var label) == false) {
+                    label = new Label { pickingMode = PickingMode.Ignore };
+                    label.style.position = Position.Absolute;
+                    label.style.minWidth = 24;
+                    label.style.height = 18;
+                    label.style.unityTextAlign = TextAnchor.MiddleCenter;
+                    label.style.color = Color.white;
+                    label.style.backgroundColor = new Color(0.20f,0.55f,0.85f,0.95f);
+                    label.style.borderTopLeftRadius = 9;
+                    label.style.borderTopRightRadius = 9;
+                    label.style.borderBottomLeftRadius = 9;
+                    label.style.borderBottomRightRadius = 9;
+                    label.style.paddingLeft = 6;
+                    label.style.paddingRight = 6;
+                    label.style.fontSize = 10;
+                    label.style.unityFontStyleAndWeight = FontStyle.Bold;
+                    _edgesLayerFront.Add(label);
+                    _edgeBadges[key] = label;
+                }
+                label.text = c.ToString();
+                label.style.display = DisplayStyle.Flex;
+                var midLocal = ComputeEdgeBadgeLocal(rec,sourceNode,ri,backIdx);
+                label.style.left = midLocal.x - 12;
+                label.style.top = midLocal.y - 9;
+            }
+            var stale = new List<(int,int)>();
+            foreach(var kv in _edgeBadges) if(seen.Contains(kv.Key) == false) stale.Add(kv.Key);
+            foreach(var k in stale) {
+                _edgeBadges[k].RemoveFromHierarchy();
+                _edgeBadges.Remove(k);
+            }
         }
         private readonly List<Port> _portsToUpdate = new();
         private void ReconcilePortSides() {
@@ -413,7 +755,7 @@ namespace MornLib {
             var pos = ghost.candidatePosition;
             _dragGhostPos = _edgesLayer.WorldToLocal(pos);
             _hasDragGhost = true;
-            _edgesLayer.MarkDirtyRepaint();
+            _edgesLayer.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
             Node target = null;
             foreach(var pair in _nodeByID) {
                 if(pair.Value.worldBound.Contains(pos)) { target = pair.Value; break; }
@@ -438,14 +780,17 @@ namespace MornLib {
             }
         }
         private static void ApplyBorder(Node n,Color color) {
-            n.style.borderTopColor = color;
-            n.style.borderBottomColor = color;
-            n.style.borderLeftColor = color;
-            n.style.borderRightColor = color;
-            n.style.borderTopWidth = HighlightBorderWidth;
-            n.style.borderBottomWidth = HighlightBorderWidth;
-            n.style.borderLeftWidth = HighlightBorderWidth;
-            n.style.borderRightWidth = HighlightBorderWidth;
+            var overlay = n.Q("morn-highlight-overlay");
+            if(overlay == null) return;
+            var width = color.a > 0f ? HighlightBorderWidth : 0;
+            overlay.style.borderTopColor = color;
+            overlay.style.borderBottomColor = color;
+            overlay.style.borderLeftColor = color;
+            overlay.style.borderRightColor = color;
+            overlay.style.borderTopWidth = width;
+            overlay.style.borderBottomWidth = width;
+            overlay.style.borderLeftWidth = width;
+            overlay.style.borderRightWidth = width;
         }
         private static IEnumerable<(string fieldName,Connection link)> EnumerateConnectionFields(MornStateBehaviour state) {
             const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -488,8 +833,9 @@ namespace MornLib {
             }
             return h;
         }
+        private const float NodeColumnSpacing = 400f;
         private Dictionary<int,Vector2> ComputeAutoLayout(MornStateMachine fsm) {
-            const float colWidth = 320f;
+            var colWidth = NodeColumnSpacing;
             const float spacing = 30f;
             var positions = new Dictionary<int,Vector2>();
             var allIDs = new HashSet<int>();
@@ -580,6 +926,26 @@ namespace MornLib {
             }
             var orphanDepth = maxNonOrphan == int.MinValue ? 1 : maxNonOrphan + 1;
             foreach(var id in orphans) depths[id] = orphanDepth;
+            // orphan が non-orphan に向かって出る場合、矢印が左→右になるよう target の左に置く
+            // 複数 pass で orphan 同士の連鎖も解決
+            for(var pass = 0;pass < cap;pass++) {
+                var changed = false;
+                foreach(var id in orphans) {
+                    var minTarget = int.MaxValue;
+                    foreach(var to in adj[id]) {
+                        if(to == id) continue;
+                        if(depths.TryGetValue(to,out var td) && td < minTarget) minTarget = td;
+                    }
+                    if(minTarget != int.MaxValue) {
+                        var desired = System.Math.Max(0,minTarget - 1);
+                        if(depths[id] != desired) {
+                            depths[id] = desired;
+                            changed = true;
+                        }
+                    }
+                }
+                if(changed == false) break;
+            }
             var byDepth = new SortedDictionary<int,List<int>>();
             foreach(var id in bfsOrder) {
                 var d = depths[id];
@@ -666,15 +1032,72 @@ namespace MornLib {
             }
             titleField.RegisterValueChangedCallback(e => RenameNode(meta.id,e.newValue));
             node.titleContainer.Insert(0,titleField);
-            node.transform.position = new Vector3(pos.x,pos.y,0);
+            var capturedNodeID = meta.id;
+            var capturedNode = node;
+            var nodeMenuBtn = new Button() { text = "⋮" };
+            nodeMenuBtn.style.width = 22;
+            nodeMenuBtn.style.height = 18;
+            nodeMenuBtn.style.minHeight = 18;
+            nodeMenuBtn.style.maxHeight = 18;
+            nodeMenuBtn.style.paddingLeft = 0;
+            nodeMenuBtn.style.paddingRight = 0;
+            nodeMenuBtn.style.paddingTop = 0;
+            nodeMenuBtn.style.paddingBottom = 0;
+            nodeMenuBtn.style.marginLeft = 4;
+            nodeMenuBtn.style.marginRight = 4;
+            nodeMenuBtn.style.marginTop = 0;
+            nodeMenuBtn.style.marginBottom = 0;
+            nodeMenuBtn.style.fontSize = 14;
+            nodeMenuBtn.style.unityFontStyleAndWeight = FontStyle.Bold;
+            nodeMenuBtn.style.backgroundColor = new Color(0,0,0,0);
+            nodeMenuBtn.style.borderTopWidth = 0;
+            nodeMenuBtn.style.borderBottomWidth = 0;
+            nodeMenuBtn.style.borderLeftWidth = 0;
+            nodeMenuBtn.style.borderRightWidth = 0;
+            nodeMenuBtn.clicked += () => ShowNodeContextMenuGeneric(capturedNodeID,capturedNode);
+            node.titleContainer.Insert(1,nodeMenuBtn);
+            node.SetPosition(new Rect(pos.x,pos.y,0,0));
             node.style.width = 260;
             node.style.minWidth = 260;
             node.style.maxWidth = 260;
             node.style.backgroundColor = new Color(0.20f,0.20f,0.20f,0.85f);
+            const float cornerRadius = 6f;
+            node.style.borderTopLeftRadius = cornerRadius;
+            node.style.borderTopRightRadius = cornerRadius;
+            node.style.borderBottomLeftRadius = cornerRadius;
+            node.style.borderBottomRightRadius = cornerRadius;
             node.mainContainer.style.backgroundColor = new Color(0,0,0,0);
             node.extensionContainer.style.backgroundColor = new Color(0,0,0,0);
             var topDivider = node.Q("divider");
             if(topDivider != null) topDivider.style.backgroundColor = new Color(0,0,0,0);
+            var nodeBorder = node.Q("node-border");
+            if(nodeBorder != null) {
+                nodeBorder.style.borderTopColor = nodeBorder.style.borderBottomColor = nodeBorder.style.borderLeftColor = nodeBorder.style.borderRightColor = new Color(0,0,0,0);
+                nodeBorder.style.borderTopWidth = nodeBorder.style.borderBottomWidth = nodeBorder.style.borderLeftWidth = nodeBorder.style.borderRightWidth = 0;
+                nodeBorder.style.borderTopLeftRadius = cornerRadius;
+                nodeBorder.style.borderTopRightRadius = cornerRadius;
+                nodeBorder.style.borderBottomLeftRadius = cornerRadius;
+                nodeBorder.style.borderBottomRightRadius = cornerRadius;
+            }
+            var selBorder = node.Q("selection-border");
+            if(selBorder != null) {
+                selBorder.style.borderTopLeftRadius = cornerRadius;
+                selBorder.style.borderTopRightRadius = cornerRadius;
+                selBorder.style.borderBottomLeftRadius = cornerRadius;
+                selBorder.style.borderBottomRightRadius = cornerRadius;
+            }
+            var highlightOverlay = new VisualElement { name = "morn-highlight-overlay" };
+            highlightOverlay.pickingMode = PickingMode.Ignore;
+            highlightOverlay.style.position = Position.Absolute;
+            highlightOverlay.style.left = 0;
+            highlightOverlay.style.right = 0;
+            highlightOverlay.style.top = 0;
+            highlightOverlay.style.bottom = 0;
+            highlightOverlay.style.borderTopLeftRadius = cornerRadius;
+            highlightOverlay.style.borderTopRightRadius = cornerRadius;
+            highlightOverlay.style.borderBottomLeftRadius = cornerRadius;
+            highlightOverlay.style.borderBottomRightRadius = cornerRadius;
+            node.Add(highlightOverlay);
             node.capabilities &= ~Capabilities.Movable;
             node.capabilities &= ~Capabilities.Collapsible;
             var collapseButton = node.titleContainer.Q("title-button-container");
@@ -693,21 +1116,217 @@ namespace MornLib {
             inspector.style.paddingTop = 4;
             inspector.style.paddingBottom = 4;
             var so = new SerializedObject(fsm);
+            inspector.name = "morn-inspector";
+            _sectionsByNode[node] = new List<VisualElement>();
             for(var bi = 0;bi < meta.behaviours.Count;bi++) {
                 var b = meta.behaviours[bi];
                 if(b == null) continue;
-                AddBehaviourSection(inspector,node,fsm,meta.id,bi,b,so);
+                var section = AddBehaviourSection(inspector,node,fsm,meta.id,bi,b,so);
+                _sectionsByNode[node].Add(section);
             }
-            var addBtn = new Button(() => OpenAddBehaviourSearch(meta.id)) { text = "+ Add Behaviour" };
+            var addBtn = new Button(() => OpenAddBehaviourSearch(meta.id)) { text = "+ Add Behaviour", name = "morn-add-btn" };
             addBtn.style.marginTop = 4;
             inspector.Add(addBtn);
             node.extensionContainer.Add(inspector);
             node.RefreshExpandedState();
             node.RefreshPorts();
+            var capturedID = meta.id;
+            node.RegisterCallback<MouseEnterEvent>(_ => { if(_isDraggingEdge == false) SetHoveredNode(capturedID); });
+            node.RegisterCallback<MouseLeaveEvent>(_ => { if(_isDraggingEdge == false) SetHoveredNode(0); });
+            var stateBadge = new Label("0") { name = "morn-state-badge" };
+            stateBadge.pickingMode = PickingMode.Ignore;
+            stateBadge.style.position = Position.Absolute;
+            stateBadge.style.top = -8;
+            stateBadge.style.right = -8;
+            stateBadge.style.minWidth = 22;
+            stateBadge.style.height = 18;
+            stateBadge.style.unityTextAlign = TextAnchor.MiddleCenter;
+            stateBadge.style.color = Color.white;
+            stateBadge.style.backgroundColor = new Color(0.85f,0.45f,0.15f,0.95f);
+            stateBadge.style.borderTopLeftRadius = 9;
+            stateBadge.style.borderTopRightRadius = 9;
+            stateBadge.style.borderBottomLeftRadius = 9;
+            stateBadge.style.borderBottomRightRadius = 9;
+            stateBadge.style.paddingLeft = 6;
+            stateBadge.style.paddingRight = 6;
+            stateBadge.style.unityFontStyleAndWeight = FontStyle.Bold;
+            stateBadge.style.fontSize = 10;
+            stateBadge.style.display = DisplayStyle.None;
+            node.Add(stateBadge);
             return node;
         }
-        private void AddBehaviourSection(VisualElement parent,Node node,MornStateMachine fsm,int stateID,int behaviourIndex,MornStateBehaviour state,SerializedObject so) {
+        private void SetHoveredNode(int id) {
+            if(_hoveredNodeID == id) return;
+            _hoveredNodeID = id;
+            _hoveredRelatedIDs.Clear();
+            if(id != 0 && _target != null) {
+                _hoveredRelatedIDs.Add(id);
+                var meta = _target.FindNode(id);
+                if(meta != null) {
+                    foreach(var b in meta.behaviours) {
+                        if(b == null) continue;
+                        foreach(var (_,link) in EnumerateConnectionFields(b)) {
+                            if(link != null && link.stateID != 0) _hoveredRelatedIDs.Add(link.stateID);
+                        }
+                    }
+                }
+            }
+            ApplyHoverEffects();
+            _edgesLayer?.MarkDirtyRepaint();
+            _edgesLayerFront?.MarkDirtyRepaint();
+        }
+        private void ApplyHoverEffects() {
+            foreach(var pair in _nodeByID) {
+                var n = pair.Value;
+                var related = _hoveredNodeID == 0 || _hoveredRelatedIDs.Contains(pair.Key);
+                n.style.opacity = related ? 1f : 0.35f;
+            }
+        }
+        private void ShowNodeContextMenuGeneric(int stateID,Node node) {
+            if(_target == null) return;
+            var menu = new GenericMenu();
+            void Item(string label,bool enabled,bool on,System.Action act) {
+                if(enabled) menu.AddItem(new GUIContent(label),on,() => act());
+                else menu.AddDisabledItem(new GUIContent(label));
+            }
+            void Sep() => menu.AddSeparator("");
+            BuildNodeMenuCommon(stateID,node,Item,Sep);
+            menu.ShowAsContext();
+        }
+        private void AppendNodeMenuItems(DropdownMenu menu,int stateID,Node node) {
+            void Item(string label,bool enabled,bool on,System.Action act) {
+                menu.AppendAction(label,_ => act(),_ => enabled ? (on ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal) : DropdownMenuAction.Status.Disabled);
+            }
+            void Sep() => menu.AppendSeparator();
+            BuildNodeMenuCommon(stateID,node,Item,Sep);
+        }
+        private void BuildNodeMenuCommon(int stateID,Node node,System.Action<string,bool,bool,System.Action> Item,System.Action Sep) {
+            Item("Set as Start State",true,_target.startStateID == stateID,() => SetAsStartState(stateID));
+            Sep();
+            Item("Delete State",true,false,() => DeleteStateAndCleanup(stateID));
+            Item("Copy State",true,false,() => CopyNodeToClipboard(node));
+            Item("Duplicate State",true,false,() => DuplicateNode(node));
+            Sep();
+            Item("Paste Behaviour As New",TryGetClipboardBehaviourType() != null,false,() => PasteBehaviourAsNew(stateID));
+        }
+        private void ShowBehaviourContextMenu(int stateID,int behaviourIndex,MornStateBehaviour state) {
+            if(_target == null) return;
+            var meta = _target.FindNode(stateID);
+            var totalCount = meta != null ? meta.behaviours.Count : 0;
+            var menu = new GenericMenu();
+            void Item(string label,bool enabled,System.Action act) {
+                if(enabled) menu.AddItem(new GUIContent(label),false,() => act());
+                else menu.AddDisabledItem(new GUIContent(label));
+            }
+            void Sep() => menu.AddSeparator("");
+            BuildBehaviourMenuCommon(stateID,behaviourIndex,state,totalCount,Item,Sep);
+            menu.ShowAsContext();
+        }
+        private void AppendBehaviourMenuItems(DropdownMenu menu,int stateID,int behaviourIndex,MornStateBehaviour state,int totalCount) {
+            void Item(string label,bool enabled,System.Action act) {
+                menu.AppendAction(label,_ => act(),_ => enabled ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            }
+            void Sep() => menu.AppendSeparator();
+            BuildBehaviourMenuCommon(stateID,behaviourIndex,state,totalCount,Item,Sep);
+        }
+        private void BuildBehaviourMenuCommon(int stateID,int behaviourIndex,MornStateBehaviour state,int totalCount,System.Action<string,bool,System.Action> Item,System.Action Sep) {
+            Item("Reset",true,() => ResetBehaviour(stateID,behaviourIndex));
+            Sep();
+            Item("Remove Behaviour",true,() => RemoveBehaviour(stateID,state));
+            Item("Move Up",behaviourIndex > 0,() => MoveBehaviour(stateID,behaviourIndex,-1));
+            Item("Move Down",behaviourIndex < totalCount - 1,() => MoveBehaviour(stateID,behaviourIndex,1));
+            Sep();
+            Item("Copy Behaviour",true,() => CopyBehaviourToClipboard(state));
+            var clipType = TryGetClipboardBehaviourType();
+            Item("Paste Behaviour Values",clipType != null && clipType == state.GetType(),() => PasteBehaviourValues(stateID,behaviourIndex));
+            Item("Paste Behaviour As New",clipType != null,() => PasteBehaviourAsNew(stateID));
+            Sep();
+            var script = FindScriptAsset(state.GetType());
+            if(script != null) {
+                Item("Edit Script",true,() => AssetDatabase.OpenAsset(script));
+                Item("Find Script in Project",true,() => EditorGUIUtility.PingObject(script));
+            }
+        }
+        [System.Serializable]
+        private class BehaviourClipboard { public string typeName; public string json; }
+        private const string BehaviourClipboardPrefix = "MORNSTATE_BEHAVIOUR:";
+        private static void CopyBehaviourToClipboard(MornStateBehaviour state) {
+            var c = new BehaviourClipboard {
+                typeName = state.GetType().AssemblyQualifiedName,
+                json = JsonUtility.ToJson(state),
+            };
+            EditorGUIUtility.systemCopyBuffer = BehaviourClipboardPrefix + JsonUtility.ToJson(c);
+        }
+        private static BehaviourClipboard TryReadBehaviourClipboard() {
+            var raw = EditorGUIUtility.systemCopyBuffer;
+            if(string.IsNullOrEmpty(raw) || raw.StartsWith(BehaviourClipboardPrefix) == false) return null;
+            try { return JsonUtility.FromJson<BehaviourClipboard>(raw.Substring(BehaviourClipboardPrefix.Length)); }
+            catch { return null; }
+        }
+        private static System.Type TryGetClipboardBehaviourType() {
+            var c = TryReadBehaviourClipboard();
+            if(c == null) return null;
+            return System.Type.GetType(c.typeName);
+        }
+        private void PasteBehaviourValues(int stateID,int behaviourIndex) {
+            if(_target == null) return;
+            var meta = _target.FindNode(stateID);
+            if(meta == null || behaviourIndex < 0 || behaviourIndex >= meta.behaviours.Count) return;
+            var c = TryReadBehaviourClipboard();
+            if(c == null) return;
+            var type = System.Type.GetType(c.typeName);
+            if(type == null || meta.behaviours[behaviourIndex] == null || meta.behaviours[behaviourIndex].GetType() != type) return;
+            Undo.RegisterCompleteObjectUndo(_target,"Paste Behaviour Values");
+            JsonUtility.FromJsonOverwrite(c.json,meta.behaviours[behaviourIndex]);
+            EditorUtility.SetDirty(_target);
+            LoadStateMachine(_target);
+        }
+        private void PasteBehaviourAsNew(int stateID) {
+            if(_target == null) return;
+            var meta = _target.FindNode(stateID);
+            if(meta == null) return;
+            var c = TryReadBehaviourClipboard();
+            if(c == null) return;
+            var type = System.Type.GetType(c.typeName);
+            if(type == null) return;
+            Undo.RegisterCompleteObjectUndo(_target,"Paste Behaviour As New");
+            var instance = (MornStateBehaviour)System.Activator.CreateInstance(type);
+            JsonUtility.FromJsonOverwrite(c.json,instance);
+            instance.StateID = stateID;
+            meta.behaviours.Add(instance);
+            EditorUtility.SetDirty(_target);
+            LoadStateMachine(_target);
+        }
+        private void ResetBehaviour(int stateID,int behaviourIndex) {
+            if(_target == null) return;
+            var meta = _target.FindNode(stateID);
+            if(meta == null || behaviourIndex < 0 || behaviourIndex >= meta.behaviours.Count) return;
+            var old = meta.behaviours[behaviourIndex];
+            if(old == null) return;
+            Undo.RegisterCompleteObjectUndo(_target,"Reset Behaviour");
+            meta.behaviours[behaviourIndex] = (MornStateBehaviour)System.Activator.CreateInstance(old.GetType());
+            EditorUtility.SetDirty(_target);
+            LoadStateMachine(_target);
+        }
+        private void DeleteStateAndCleanup(int stateID) {
+            if(_target == null) return;
+            Undo.RegisterCompleteObjectUndo(_target,"Delete State");
+            _target.UnregisterNode(stateID);
+            foreach(var n in _target.NodesMutable) {
+                if(n.behaviours == null) continue;
+                foreach(var b in n.behaviours) {
+                    if(b == null) continue;
+                    foreach(var f in b.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)) {
+                        if(f.GetValue(b) is Connection c && c.stateID == stateID) c.stateID = 0;
+                    }
+                }
+            }
+            EditorUtility.SetDirty(_target);
+            LoadStateMachine(_target);
+        }
+        private VisualElement AddBehaviourSection(VisualElement parent,Node node,MornStateMachine fsm,int stateID,int behaviourIndex,MornStateBehaviour state,SerializedObject so) {
             var section = new VisualElement();
+            section.userData = state;
             section.style.marginBottom = 4;
             section.style.borderTopWidth = 1;
             section.style.borderTopColor = new Color(1f,1f,1f,0.1f);
@@ -715,38 +1334,56 @@ namespace MornLib {
             var header = new VisualElement();
             header.style.flexDirection = FlexDirection.Row;
             header.style.justifyContent = Justify.SpaceBetween;
+            header.style.alignItems = Align.Center;
             header.style.marginBottom = 2;
-            var script = FindScriptAsset(state.GetType());
-            var titleField = new ObjectField {
-                value = script,
-                objectType = typeof(MonoScript),
-                allowSceneObjects = false,
-            };
-            titleField.SetEnabled(false);
-            titleField.style.flexGrow = 1;
-            titleField.style.marginTop = 0;
-            titleField.style.marginBottom = 0;
-            titleField.style.height = 18;
-            titleField.style.minHeight = 18;
-            var titleFieldInput = titleField.Q(className: "unity-object-field__input");
-            if(titleFieldInput != null) {
-                titleFieldInput.style.height = 18;
-                titleFieldInput.style.minHeight = 18;
-            }
-            header.Add(titleField);
-            var metaForButtons = fsm.FindNode(stateID);
-            var totalCount = metaForButtons != null ? metaForButtons.behaviours.Count : 0;
-            var btnUp = new Button(() => MoveBehaviour(stateID,behaviourIndex,-1)) { text = "↑" };
-            btnUp.style.width = 22; btnUp.style.height = 18;
-            btnUp.SetEnabled(behaviourIndex > 0);
-            header.Add(btnUp);
-            var btnDown = new Button(() => MoveBehaviour(stateID,behaviourIndex,1)) { text = "↓" };
-            btnDown.style.width = 22; btnDown.style.height = 18;
-            btnDown.SetEnabled(behaviourIndex < totalCount - 1);
-            header.Add(btnDown);
-            var del = new Button(() => RemoveBehaviour(stateID,state)) { text = "x" };
-            del.style.width = 22; del.style.height = 18;
-            header.Add(del);
+            var titleLabel = new Label(state.GetType().Name);
+            titleLabel.style.flexGrow = 1;
+            titleLabel.style.height = 18;
+            titleLabel.style.minHeight = 18;
+            titleLabel.style.unityTextAlign = TextAnchor.MiddleLeft;
+            titleLabel.style.paddingLeft = 4;
+            titleLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            titleLabel.style.backgroundColor = new Color(0.25f,0.25f,0.25f,0.6f);
+            titleLabel.style.borderTopLeftRadius = 2;
+            titleLabel.style.borderTopRightRadius = 2;
+            titleLabel.style.borderBottomLeftRadius = 2;
+            titleLabel.style.borderBottomRightRadius = 2;
+            header.Add(titleLabel);
+            var menuBtn = new Button() { text = "⋮" };
+            menuBtn.style.position = Position.Absolute;
+            menuBtn.style.right = 0;
+            menuBtn.style.top = 0;
+            menuBtn.style.width = 22;
+            menuBtn.style.height = 18;
+            menuBtn.style.minHeight = 18;
+            menuBtn.style.maxHeight = 18;
+            menuBtn.style.unityFontStyleAndWeight = FontStyle.Bold;
+            menuBtn.style.fontSize = 14;
+            menuBtn.style.paddingTop = 0;
+            menuBtn.style.paddingBottom = 0;
+            menuBtn.style.paddingLeft = 0;
+            menuBtn.style.paddingRight = 0;
+            menuBtn.style.marginTop = 0;
+            menuBtn.style.marginBottom = 0;
+            menuBtn.style.backgroundColor = new Color(0,0,0,0);
+            menuBtn.style.borderTopWidth = 0;
+            menuBtn.style.borderBottomWidth = 0;
+            menuBtn.style.borderLeftWidth = 0;
+            menuBtn.style.borderRightWidth = 0;
+            menuBtn.clicked += () => ShowBehaviourContextMenu(stateID,behaviourIndex,state);
+            header.Add(menuBtn);
+            titleLabel.RegisterCallback<MouseDownEvent>(e => {
+                if(e.button != 0) return;
+                StartBehaviourDrag(stateID,behaviourIndex,section);
+                UpdateBehaviourDragHover(e.mousePosition);
+                e.StopPropagation();
+            });
+            section.RegisterCallback<MouseDownEvent>(e => {
+                if(e.button != 1) return;
+                ShowBehaviourContextMenu(stateID,behaviourIndex,state);
+                e.StopPropagation();
+                e.PreventDefault();
+            },TrickleDown.TrickleDown);
             section.Add(header);
             var nodeIndex = fsm.NodesMutable.FindIndex(n => n.id == stateID);
             if(nodeIndex >= 0) {
@@ -766,7 +1403,8 @@ namespace MornLib {
                     && tp.x < sp.x;
                 section.Add(CreateOutputPortRow(node,state,link,fieldName,isBack));
             }
-            parent.Add(section);
+            if(parent != null) parent.Add(section);
+            return section;
         }
         private VisualElement CreateOutputPortRow(Node node,MornStateBehaviour state,Connection link,string fieldName,bool placeOnLeft) {
             var row = new VisualElement();
@@ -778,8 +1416,8 @@ namespace MornLib {
             var port = node.InstantiatePort(Orientation.Horizontal,Direction.Output,Port.Capacity.Single,typeof(MornStateBehaviour));
             port.portName = "";
             port.userData = (state,link);
-            port.RegisterCallback<MouseDownEvent>(e => { if(e.button == 0) { _isDraggingEdge = true; _draggingPort = port; } },TrickleDown.TrickleDown);
-            port.RegisterCallback<PointerDownEvent>(e => { if(e.button == 0) { _isDraggingEdge = true; _draggingPort = port; } },TrickleDown.TrickleDown);
+            port.RegisterCallback<MouseDownEvent>(e => { if(e.button == 0) { _isDraggingEdge = true; _draggingPort = port; SetHoveredNode(0); } },TrickleDown.TrickleDown);
+            port.RegisterCallback<PointerDownEvent>(e => { if(e.button == 0) { _isDraggingEdge = true; _draggingPort = port; SetHoveredNode(0); } },TrickleDown.TrickleDown);
             port.RegisterCallback<PointerMoveEvent>(e => { if(_isDraggingEdge) HandleDragMove(e.position); },TrickleDown.TrickleDown);
             port.RegisterCallback<MouseMoveEvent>(e => { if(_isDraggingEdge) HandleDragMove(e.mousePosition); },TrickleDown.TrickleDown);
             port.RegisterCallback<PointerUpEvent>(_ => StopEdgeDrag(),TrickleDown.TrickleDown);
@@ -810,6 +1448,10 @@ namespace MornLib {
             label.style.unityTextAlign = placeOnLeft ? TextAnchor.MiddleLeft : TextAnchor.MiddleRight;
             label.style.marginLeft = placeOnLeft ? 4 : 0;
             label.style.marginRight = placeOnLeft ? 0 : 4;
+            port.style.paddingLeft = 0;
+            port.style.paddingRight = 0;
+            port.style.marginLeft = placeOnLeft ? -6 : 0;
+            port.style.marginRight = placeOnLeft ? 0 : -6;
         }
         private void OnEdgeDragMove(MouseMoveEvent e) {
             if(_isDraggingEdge == false) return;
@@ -849,7 +1491,7 @@ namespace MornLib {
             _isDraggingEdge = false;
             _draggingPort = null;
             ClearDropTargetHighlight();
-            _edgesLayer?.MarkDirtyRepaint();
+            _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
         }
         private static void ApplyDropTargetHighlight(Node node) {
             ApplyBorder(node,new Color(1.00f,0.20f,0.20f));
@@ -867,6 +1509,27 @@ namespace MornLib {
             if(input == null) return;
             Undo.RegisterCompleteObjectUndo(_target,"Connect Edge");
             tup.Item2.stateID = targetID;
+            EditorUtility.SetDirty(_target);
+            LoadStateMachine(_target);
+        }
+        public void ShowDropOutsideMenu(Port outputPort,Vector2 worldPos) {
+            if(outputPort == null || _target == null) return;
+            var graphPos = contentViewContainer.WorldToLocal(worldPos);
+            var menu = new GenericMenu();
+            menu.AddItem(new GUIContent("Create State"),false,() => CreateNodeAndConnect(outputPort,graphPos));
+            menu.AddSeparator("");
+            menu.AddItem(new GUIContent("Disconnect"),false,() => DisconnectOutput(outputPort));
+            menu.ShowAsContext();
+        }
+        private void CreateNodeAndConnect(Port outputPort,Vector2 graphPos) {
+            if(outputPort == null || _target == null) return;
+            if(outputPort.userData is not System.ValueTuple<MornStateBehaviour,Connection> tup) return;
+            var newID = AllocateUniqueStateID();
+            Undo.RegisterCompleteObjectUndo(_target,"Create State and Connect");
+            _target.RegisterNode(new MornStateMachine.StateNode { id = newID,name = "New State" });
+            if(_target.startStateID == 0) _target.startStateID = newID;
+            tup.Item2.stateID = newID;
+            _layoutPositions[newID] = graphPos;
             EditorUtility.SetDirty(_target);
             LoadStateMachine(_target);
         }
@@ -893,7 +1556,7 @@ namespace MornLib {
                     if(target != null) break;
                 }
                 if(target == null) {
-                    _view.DisconnectOutput(edge.output);
+                    _view.ShowDropOutsideMenu(edge.output,position);
                     return;
                 }
                 _view.ConnectFromOutputToNode(edge.output,target);
@@ -930,6 +1593,150 @@ namespace MornLib {
             _scriptCache[type] = found;
             return found;
         }
+        private bool _isDraggingBehaviour;
+        private int _behaviourDragFromStateID;
+        private int _behaviourDragFromIndex;
+        private VisualElement _behaviourDragSection;
+        private Node _behaviourDragHoverNode;
+        private VisualElement _behaviourDragGhost;
+        private VisualElement _behaviourDropIndicator;
+        private int _behaviourDropInsertIndex = -1;
+        private Vector2 _behaviourDragGhostSize;
+        private readonly Dictionary<Node,List<VisualElement>> _sectionsByNode = new();
+        private void StartBehaviourDrag(int stateID,int behaviourIndex,VisualElement section) {
+            _isDraggingBehaviour = true;
+            _behaviourDragFromStateID = stateID;
+            _behaviourDragFromIndex = behaviourIndex;
+            _behaviourDragSection = section;
+            section.style.opacity = 0.3f;
+            section.style.borderLeftWidth = 3;
+            section.style.borderLeftColor = new Color(0.3f,0.7f,1.0f);
+            var meta = _target?.FindNode(stateID);
+            var b = meta != null && behaviourIndex < meta.behaviours.Count ? meta.behaviours[behaviourIndex] : null;
+            var typeName = b?.GetType().Name ?? "?";
+            var ghostLabel = new Label($"⇆ {typeName}");
+            ghostLabel.style.position = Position.Absolute;
+            ghostLabel.style.backgroundColor = new Color(0.15f,0.15f,0.15f,0.95f);
+            ghostLabel.style.color = new Color(1f,1f,1f);
+            ghostLabel.style.borderTopWidth = 2;
+            ghostLabel.style.borderBottomWidth = 2;
+            ghostLabel.style.borderLeftWidth = 2;
+            ghostLabel.style.borderRightWidth = 2;
+            ghostLabel.style.borderTopColor = new Color(0.3f,0.7f,1.0f);
+            ghostLabel.style.borderBottomColor = new Color(0.3f,0.7f,1.0f);
+            ghostLabel.style.borderLeftColor = new Color(0.3f,0.7f,1.0f);
+            ghostLabel.style.borderRightColor = new Color(0.3f,0.7f,1.0f);
+            ghostLabel.style.borderTopLeftRadius = 4;
+            ghostLabel.style.borderTopRightRadius = 4;
+            ghostLabel.style.borderBottomLeftRadius = 4;
+            ghostLabel.style.borderBottomRightRadius = 4;
+            ghostLabel.style.paddingLeft = 8;
+            ghostLabel.style.paddingRight = 8;
+            ghostLabel.style.paddingTop = 4;
+            ghostLabel.style.paddingBottom = 4;
+            ghostLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            ghostLabel.pickingMode = PickingMode.Ignore;
+            _behaviourDragGhost = ghostLabel;
+            Add(_behaviourDragGhost);
+            _behaviourDragGhost.BringToFront();
+            _behaviourDropIndicator = new VisualElement();
+            _behaviourDropIndicator.style.position = Position.Absolute;
+            _behaviourDropIndicator.style.height = 3;
+            _behaviourDropIndicator.style.backgroundColor = new Color(0.3f,0.7f,1.0f);
+            _behaviourDropIndicator.style.borderTopLeftRadius = 2;
+            _behaviourDropIndicator.style.borderTopRightRadius = 2;
+            _behaviourDropIndicator.style.borderBottomLeftRadius = 2;
+            _behaviourDropIndicator.style.borderBottomRightRadius = 2;
+            _behaviourDropIndicator.pickingMode = PickingMode.Ignore;
+            _behaviourDropIndicator.style.display = DisplayStyle.None;
+            Add(_behaviourDropIndicator);
+            _behaviourDropIndicator.BringToFront();
+        }
+        private void UpdateBehaviourDragHover(Vector2 worldPos) {
+            if(_isDraggingBehaviour == false) return;
+            if(_behaviourDragGhost != null) {
+                var local = this.WorldToLocal(worldPos);
+                _behaviourDragGhost.style.left = local.x + 4;
+                _behaviourDragGhost.style.top = local.y + 4;
+            }
+            Node target = null;
+            foreach(var pair in _nodeByID) {
+                if(pair.Value.worldBound.Contains(worldPos)) { target = pair.Value; break; }
+            }
+            if(target != _behaviourDragHoverNode) {
+                if(_behaviourDragHoverNode != null) ApplyBorder(_behaviourDragHoverNode,new Color(0,0,0,0));
+                _behaviourDragHoverNode = target;
+                if(_behaviourDragHoverNode != null) ApplyBorder(_behaviourDragHoverNode,new Color(0.3f,0.7f,1.0f));
+            }
+            UpdateDropIndicator(worldPos);
+        }
+        private void UpdateDropIndicator(Vector2 worldPos) {
+            if(_behaviourDropIndicator == null) return;
+            if(_behaviourDragHoverNode == null || _sectionsByNode.TryGetValue(_behaviourDragHoverNode,out var sections) == false) {
+                _behaviourDropIndicator.style.display = DisplayStyle.None;
+                _behaviourDropInsertIndex = -1;
+                return;
+            }
+            var insertIndex = sections.Count;
+            float yWorld;
+            if(sections.Count == 0) {
+                var nb = _behaviourDragHoverNode.worldBound;
+                yWorld = nb.yMax - 30;
+            } else {
+                insertIndex = sections.Count;
+                for(var i = 0;i < sections.Count;i++) {
+                    var sb = sections[i].worldBound;
+                    if(worldPos.y < sb.center.y) { insertIndex = i; break; }
+                }
+                if(insertIndex == 0) yWorld = sections[0].worldBound.yMin;
+                else if(insertIndex >= sections.Count) yWorld = sections[sections.Count - 1].worldBound.yMax;
+                else yWorld = (sections[insertIndex - 1].worldBound.yMax + sections[insertIndex].worldBound.yMin) * 0.5f;
+            }
+            var leftWorld = _behaviourDragHoverNode.worldBound.xMin + 8;
+            var widthWorld = _behaviourDragHoverNode.worldBound.width - 16;
+            var localTopLeft = this.WorldToLocal(new Vector2(leftWorld,yWorld));
+            _behaviourDropIndicator.style.display = DisplayStyle.Flex;
+            _behaviourDropIndicator.style.left = localTopLeft.x;
+            _behaviourDropIndicator.style.top = localTopLeft.y - 1.5f;
+            _behaviourDropIndicator.style.width = widthWorld;
+            _behaviourDropInsertIndex = insertIndex;
+        }
+        private void EndBehaviourDrag(Vector2 worldPos) {
+            if(_isDraggingBehaviour == false) return;
+            _isDraggingBehaviour = false;
+            if(_behaviourDragSection != null) {
+                _behaviourDragSection.style.opacity = 1f;
+                _behaviourDragSection.style.borderLeftWidth = 0;
+            }
+            _behaviourDragSection = null;
+            if(_behaviourDragGhost != null) { Remove(_behaviourDragGhost); _behaviourDragGhost = null; }
+            if(_behaviourDropIndicator != null) { Remove(_behaviourDropIndicator); _behaviourDropIndicator = null; }
+            var insertIndex = _behaviourDropInsertIndex;
+            _behaviourDropInsertIndex = -1;
+            UpdateHighlights();
+            Node target = null;
+            foreach(var pair in _nodeByID) {
+                if(pair.Value.worldBound.Contains(worldPos)) { target = pair.Value; break; }
+            }
+            if(target == null || target.userData is not int targetID) return;
+            MoveBehaviourToState(_behaviourDragFromStateID,_behaviourDragFromIndex,targetID,insertIndex);
+        }
+        private void MoveBehaviourToState(int fromStateID,int fromIndex,int toStateID,int toIndex) {
+            if(_target == null) return;
+            var fromMeta = _target.FindNode(fromStateID);
+            var toMeta = _target.FindNode(toStateID);
+            if(fromMeta == null || toMeta == null) return;
+            if(fromIndex < 0 || fromIndex >= fromMeta.behaviours.Count) return;
+            Undo.RegisterCompleteObjectUndo(_target,"Move Behaviour");
+            var b = fromMeta.behaviours[fromIndex];
+            fromMeta.behaviours.RemoveAt(fromIndex);
+            // 同一 state 内移動の場合 toIndex を補正 (削除後ずれる)
+            if(fromStateID == toStateID && toIndex > fromIndex) toIndex--;
+            if(toIndex < 0 || toIndex > toMeta.behaviours.Count) toIndex = toMeta.behaviours.Count;
+            toMeta.behaviours.Insert(toIndex,b);
+            EditorUtility.SetDirty(_target);
+            EditorApplication.delayCall += () => LoadStateMachine(_target);
+        }
         private void MoveBehaviour(int stateID,int fromIndex,int delta) {
             if(_target == null) return;
             var meta = _target.FindNode(stateID);
@@ -951,19 +1758,99 @@ namespace MornLib {
             EditorApplication.delayCall += () => LoadStateMachine(_target);
         }
         public override void BuildContextualMenu(ContextualMenuPopulateEvent evt) {
-            if(_target != null && evt.target is VisualElement ve) {
-                Node node = null;
+            if(_target == null) return;
+            Node hitNode = null;
+            MornStateBehaviour hitBehaviour = null;
+            if(evt.target is VisualElement ve) {
                 for(VisualElement cur = ve;cur != null;cur = cur.parent) {
-                    if(cur is Node n) { node = n; break; }
-                }
-                if(node != null && node.userData is int sid) {
-                    var captured = sid;
-                    evt.menu.AppendAction("Set as Start State",_ => SetAsStart(captured),
-                        _ => captured == _target.startStateID ? DropdownMenuAction.Status.Checked : DropdownMenuAction.Status.Normal);
-                    evt.menu.AppendSeparator();
+                    if(hitBehaviour == null && cur.userData is MornStateBehaviour bh) hitBehaviour = bh;
+                    if(cur is Node n) { hitNode = n; break; }
                 }
             }
-            base.BuildContextualMenu(evt);
+            if(hitBehaviour != null && hitNode != null && hitNode.userData is int bsid) {
+                var meta = _target.FindNode(bsid);
+                if(meta != null) {
+                    var idx = meta.behaviours.IndexOf(hitBehaviour);
+                    if(idx >= 0) {
+                        AppendBehaviourMenuItems(evt.menu,bsid,idx,hitBehaviour,meta.behaviours.Count);
+                        return;
+                    }
+                }
+            }
+            var selectedNodes = GetSelectedStateNodes();
+            var multi = selectedNodes.Count >= 2;
+            if(multi && hitNode != null && selectedNodes.Contains(hitNode) == false) multi = false;
+            if(multi) {
+                var captured = new List<Node>(selectedNodes);
+                evt.menu.AppendAction($"Copy {captured.Count} States",_ => CopyNodesToClipboard(captured));
+                evt.menu.AppendAction($"Duplicate {captured.Count} States",_ => DuplicateNodes(captured));
+                evt.menu.AppendAction($"Delete {captured.Count} States",_ => DeleteStatesAndCleanup(captured));
+                return;
+            }
+            if(hitNode != null && hitNode.userData is int sid) {
+                AppendNodeMenuItems(evt.menu,sid,hitNode);
+                return;
+            }
+            var screenMousePos = evt.mousePosition;
+            var graphPos = contentViewContainer.WorldToLocal(screenMousePos);
+            evt.menu.AppendAction("Create State",_ => CreateEmptyStateAt(graphPos));
+            var clipboard = EditorGUIUtility.systemCopyBuffer;
+            var canPaste = string.IsNullOrEmpty(clipboard) == false && clipboard.StartsWith("{");
+            evt.menu.AppendAction("Paste State",_ => PasteAtGraphPos(clipboard,graphPos),
+                _ => canPaste ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+        }
+        private List<Node> GetSelectedStateNodes() {
+            var result = new List<Node>();
+            foreach(var s in selection) {
+                if(s is Node n && n.userData is int) result.Add(n);
+            }
+            return result;
+        }
+        private void CopyNodesToClipboard(List<Node> nodes) {
+            var data = SerializeForClipboard(nodes.ConvertAll(n => (GraphElement)n));
+            EditorGUIUtility.systemCopyBuffer = data;
+        }
+        private void DuplicateNodes(List<Node> nodes) {
+            var data = SerializeForClipboard(nodes.ConvertAll(n => (GraphElement)n));
+            UnserializeAndPaste("Duplicate",data);
+        }
+        private void DeleteStatesAndCleanup(List<Node> nodes) {
+            if(_target == null || nodes.Count == 0) return;
+            var ids = new HashSet<int>();
+            foreach(var n in nodes) {
+                if(n.userData is int id) ids.Add(id);
+            }
+            if(ids.Count == 0) return;
+            Undo.RegisterCompleteObjectUndo(_target,"Delete States");
+            foreach(var id in ids) _target.UnregisterNode(id);
+            foreach(var n in _target.NodesMutable) {
+                if(n.behaviours == null) continue;
+                foreach(var b in n.behaviours) {
+                    if(b == null) continue;
+                    foreach(var f in b.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)) {
+                        if(f.GetValue(b) is Connection c && ids.Contains(c.stateID)) c.stateID = 0;
+                    }
+                }
+            }
+            EditorUtility.SetDirty(_target);
+            LoadStateMachine(_target);
+        }
+        public override EventPropagation DeleteSelection() {
+            var nodes = GetSelectedStateNodes();
+            if(nodes.Count == 0) return EventPropagation.Continue;
+            DeleteStatesAndCleanup(nodes);
+            return EventPropagation.Stop;
+        }
+        private void CopyNodeToClipboard(Node node) {
+            var data = SerializeForClipboard(new[] { (GraphElement)node });
+            EditorGUIUtility.systemCopyBuffer = data;
+        }
+        private void DuplicateNode(Node node) {
+            var data = SerializeForClipboard(new[] { (GraphElement)node });
+            UnserializeAndPaste("Duplicate",data);
+        }
+        private void PasteAtGraphPos(string serializedData,Vector2 graphPos) {
+            UnserializeAndPaste("Paste",serializedData);
         }
         public void OpenAddBehaviourSearch(int stateID) {
             if(_target == null) return;
@@ -971,6 +1858,7 @@ namespace MornLib {
             provider.SetupAddBehaviour(this,stateID);
             var screenPos = GUIUtility.GUIToScreenPoint(Event.current != null ? Event.current.mousePosition : Vector2.zero);
             SearchWindow.Open(new SearchWindowContext(screenPos),provider);
+            MornStateSearchProvider.ApplyFilterToOpenWindow(provider.SavedFilter);
         }
         public void CreateEmptyStateAt(Vector2 graphPos) {
             if(_target == null) return;
@@ -978,7 +1866,7 @@ namespace MornLib {
             Undo.RegisterCompleteObjectUndo(_target,"Create State");
             _target.RegisterNode(new MornStateMachine.StateNode {
                 id = newID,
-                name = "New Node",
+                name = "New State",
             });
             if(_target.startStateID == 0) _target.startStateID = newID;
             EditorUtility.SetDirty(_target);
@@ -992,7 +1880,7 @@ namespace MornLib {
             instance.StateID = newID;
             var meta = new MornStateMachine.StateNode {
                 id = newID,
-                name = "New Node",
+                name = "New State",
             };
             meta.behaviours.Add(instance);
             _target.RegisterNode(meta);
@@ -1009,9 +1897,31 @@ namespace MornLib {
             instance.StateID = stateID;
             meta.behaviours.Add(instance);
             EditorUtility.SetDirty(_target);
+            if(_nodeByID.TryGetValue(stateID,out var node) && IncrementalAppendBehaviour(node,meta,instance)) {
+                _nodeSig[stateID] = ComputeNodeSig(meta);
+                RebuildEdgeRecords(_target);
+                UpdateHighlights();
+                return;
+            }
             LoadStateMachine(_target);
         }
-        public void SetAsStart(int stateID) {
+        private bool IncrementalAppendBehaviour(Node node,MornStateMachine.StateNode meta,MornStateBehaviour newBehaviour) {
+            var inspector = node.Q("morn-inspector");
+            var addBtn = node.Q("morn-add-btn");
+            if(inspector == null || addBtn == null) return false;
+            var bi = meta.behaviours.IndexOf(newBehaviour);
+            if(bi < 0) return false;
+            var so = new SerializedObject(_target);
+            var section = AddBehaviourSection(null,node,_target,meta.id,bi,newBehaviour,so);
+            inspector.Insert(inspector.IndexOf(addBtn),section);
+            if(_sectionsByNode.TryGetValue(node,out var list) == false) {
+                list = new List<VisualElement>();
+                _sectionsByNode[node] = list;
+            }
+            list.Add(section);
+            return true;
+        }
+        public void SetAsStartState(int stateID) {
             if(_target == null) return;
             Undo.RecordObject(_target,"Set Start State");
             _target.startStateID = stateID;

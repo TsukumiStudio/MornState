@@ -22,11 +22,17 @@ namespace MornLib {
         public List<StateNode> NodesMutable => _nodes;
         public IReadOnlyList<MornStateBehaviour> CurrentBehaviours => _currentBehaviours;
         public int CurrentStateID => _currentStateID;
+        private readonly Dictionary<int,int> _stateEnterCounts = new();
+        private readonly Dictionary<(int from,int to),int> _transitionCounts = new();
+        public IReadOnlyDictionary<int,int> StateEnterCounts => _stateEnterCounts;
+        public IReadOnlyDictionary<(int from,int to),int> TransitionCounts => _transitionCounts;
         private void Awake() {
             _currentBehaviours.Clear();
             _updateBuffer.Clear();
             _pendingTransition = NotPending;
             _currentStateID = 0;
+            _stateEnterCounts.Clear();
+            _transitionCounts.Clear();
             ReinjectOwners();
             foreach(var n in _nodes) foreach(var b in n.behaviours) if(b != null) b.RebuildConnectionCache();
         }
@@ -36,7 +42,9 @@ namespace MornLib {
         private void Update() {
             _updateBuffer.Clear();
             _updateBuffer.AddRange(_currentBehaviours);
+            var stateAtStart = _currentStateID;
             foreach(var b in _updateBuffer) {
+                if(_currentStateID != stateAtStart) break;
                 if(_currentBehaviours.Contains(b) == false) continue;
                 b.InternalUpdate();
             }
@@ -91,11 +99,20 @@ namespace MornLib {
                     Debug.LogWarning($"[MornState] StateID {nextID} not found on {name}.",this);
                     return;
                 }
+                var prevID = _currentStateID;
                 foreach(var b in _currentBehaviours) b?.InternalEnd();
                 _currentBehaviours.Clear();
                 _currentStateID = nextID;
+                _stateEnterCounts.TryGetValue(nextID,out var ec);
+                _stateEnterCounts[nextID] = ec + 1;
+                if(prevID != 0) {
+                    var key = (prevID,nextID);
+                    _transitionCounts.TryGetValue(key,out var tc);
+                    _transitionCounts[key] = tc + 1;
+                }
                 foreach(var b in nextNode.behaviours) {
                     if(b == null) continue;
+                    if(_currentStateID != nextID) break;
                     _currentBehaviours.Add(b);
                     b.InternalBegin();
                 }
