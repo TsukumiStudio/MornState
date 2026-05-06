@@ -12,6 +12,8 @@ namespace MornLib {
         [SerializeField] private List<StateNode> _nodes = new();
         private readonly List<MornStateBehaviour> _currentBehaviours = new();
         private readonly List<MornStateBehaviour> _updateBuffer = new();
+        private readonly Dictionary<int,int> _stateEnterCounts = new();
+        private readonly Dictionary<(int from,int to),int> _transitionCounts = new();
         private int _pendingTransition = NotPending;
         private int _currentStateID;
         private int _transitionFrame = -1;
@@ -22,8 +24,6 @@ namespace MornLib {
         public List<StateNode> NodesMutable => _nodes;
         public IReadOnlyList<MornStateBehaviour> CurrentBehaviours => _currentBehaviours;
         public int CurrentStateID => _currentStateID;
-        private readonly Dictionary<int,int> _stateEnterCounts = new();
-        private readonly Dictionary<(int from,int to),int> _transitionCounts = new();
         public IReadOnlyDictionary<int,int> StateEnterCounts => _stateEnterCounts;
         public IReadOnlyDictionary<(int from,int to),int> TransitionCounts => _transitionCounts;
         private void Awake() {
@@ -100,7 +100,7 @@ namespace MornLib {
                     return;
                 }
                 var prevID = _currentStateID;
-                foreach(var b in _currentBehaviours) b?.InternalEnd();
+                foreach(var b in _currentBehaviours) b.InternalEnd();
                 _currentBehaviours.Clear();
                 _currentStateID = nextID;
                 _stateEnterCounts.TryGetValue(nextID,out var ec);

@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Linq;
 using System.Reflection;
 using UnityEditor;
 using UnityEditor.Experimental.GraphView;
@@ -79,12 +78,45 @@ namespace MornLib {
         private readonly List<EdgeRecord> _edgeRecords = new();
         private VisualElement _edgesLayer;
         private VisualElement _edgesLayerFront;
-        private struct EdgeRecord {
-            public Port outputPort;
-            public Node targetNode;
-            public MornStateBehaviour source;
-            public Connection link;
-        }
+        private bool _hasLoadedOnce;
+        private bool _isClearingForReload;
+        private bool _edgeLayoutPending;
+        private int _hoveredNodeID;
+        private readonly HashSet<int> _hoveredRelatedIDs = new();
+        private readonly Dictionary<int,string> _nodeSig = new();
+        private readonly Dictionary<Node,AnimState> _animations = new();
+        private double _lastAnimTime;
+        private int _lastCurrentSnapshot = int.MinValue;
+        private readonly Dictionary<(int from,int to),Label> _edgeBadges = new();
+        private readonly List<Port> _portsToUpdate = new();
+        private Vector2 _dragGhostPos;
+        private bool _hasDragGhost;
+        private bool _isDraggingEdge;
+        private Port _draggingPort;
+        private Node _dropTargetNode;
+        private readonly Dictionary<Port,(VisualElement row,Label label,bool placeOnLeft,Connection link)> _portRowInfo = new();
+        private int _dragMoveCount;
+        private bool _isDraggingBehaviour;
+        private int _behaviourDragFromStateID;
+        private int _behaviourDragFromIndex;
+        private VisualElement _behaviourDragSection;
+        private Node _behaviourDragHoverNode;
+        private VisualElement _behaviourDragGhost;
+        private VisualElement _behaviourDropIndicator;
+        private int _behaviourDropInsertIndex = -1;
+        private Vector2 _behaviourDragGhostSize;
+        private readonly Dictionary<Node,List<VisualElement>> _sectionsByNode = new();
+        private const float BackEdgeBaseDepth = 40f;
+        private const float BackEdgeStepDepth = 28f;
+        private const float BackEdgeDetectThreshold = 40f;
+        private const float BackEdgeCornerInset = 12f;
+        private const float BackEdgeStub = 32f;
+        private const float BackEdgeStubStep = 12f;
+        private const float ForwardEdgeStub = 16f;
+        private const int HighlightBorderWidth = 4;
+        private const float NodeColumnSpacing = 400f;
+        private const string BehaviourClipboardPrefix = "MORNSTATE_BEHAVIOUR:";
+        private static readonly Dictionary<System.Type,MonoScript> _scriptCache = new();
         public MornStateMachineGraphView() {
             this.AddManipulator(new ContentDragger());
             this.AddManipulator(new SelectionDragger());
@@ -141,12 +173,12 @@ namespace MornLib {
                 CreateEmptyStateAt(graphPos);
             };
         }
-        private bool _hasLoadedOnce;
-        private bool _isClearingForReload;
-        private bool _edgeLayoutPending;
-        private int _hoveredNodeID;
-        private readonly HashSet<int> _hoveredRelatedIDs = new();
-        private readonly Dictionary<int,string> _nodeSig = new();
+        private struct EdgeRecord {
+            public Port outputPort;
+            public Node targetNode;
+            public MornStateBehaviour source;
+            public Connection link;
+        }
         private static string ComputeNodeSig(MornStateMachine.StateNode meta) {
             if(meta.behaviours == null) return "";
             var sb = new System.Text.StringBuilder();
@@ -440,13 +472,6 @@ namespace MornLib {
                 ? new Vector2(port.worldBound.x,fallbackY)
                 : new Vector2(port.worldBound.xMax,fallbackY);
         }
-        private const float BackEdgeBaseDepth = 40f;
-        private const float BackEdgeStepDepth = 28f;
-        private const float BackEdgeDetectThreshold = 40f;
-        private const float BackEdgeCornerInset = 12f;
-        private const float BackEdgeStub = 32f;
-        private const float BackEdgeStubStep = 12f;
-        private const float ForwardEdgeStub = 16f;
         private static float GetBackEdgeStub(int laneIdx) => BackEdgeStub + laneIdx * BackEdgeStubStep;
         private static bool IsBackEdgeBetween(Vector2 sourceCenter,Vector2 targetCenter) {
             return targetCenter.x < sourceCenter.x - BackEdgeDetectThreshold;
@@ -568,13 +593,11 @@ namespace MornLib {
             return fallback;
         }
         private struct AnimState { public Vector2 start; public Vector2 end; public float elapsed; public float duration; }
-        private readonly Dictionary<Node,AnimState> _animations = new();
         private static Vector2 GetAbsolutePosition(Node node) {
             var p = node.GetPosition().position;
             var t = node.transform.position;
             return new Vector2(p.x + t.x,p.y + t.y);
         }
-        private double _lastAnimTime;
         private void TickAnimations() {
             if(_animations.Count == 0) { _lastAnimTime = EditorApplication.timeSinceStartup; return; }
             var now = EditorApplication.timeSinceStartup;
@@ -597,7 +620,6 @@ namespace MornLib {
             foreach(var n in finished) _animations.Remove(n);
             _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
         }
-        private int _lastCurrentSnapshot = int.MinValue;
         private void OnEditorUpdate() {
             TickAnimations();
             var snapshot = Application.isPlaying && _target != null ? _target.CurrentStateID : 0;
@@ -610,7 +632,6 @@ namespace MornLib {
             UpdateRuntimeBadges();
             _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
         }
-        private readonly Dictionary<(int from,int to),Label> _edgeBadges = new();
         private Vector2 ComputeEdgeBadgeLocal(EdgeRecord rec,Node sourceNode,int recIndex,Dictionary<int,int> backIdx) {
             var sourceCenter = sourceNode.worldBound.center;
             var portCenter = rec.outputPort.worldBound.center;
@@ -714,7 +735,6 @@ namespace MornLib {
                 _edgeBadges.Remove(k);
             }
         }
-        private readonly List<Port> _portsToUpdate = new();
         private void ReconcilePortSides() {
             if(_portRowInfo.Count == 0) return;
             _portsToUpdate.Clear();
@@ -738,8 +758,6 @@ namespace MornLib {
                 _portRowInfo[port] = (info.row,info.label,isBack,info.link);
             }
         }
-        private Vector2 _dragGhostPos;
-        private bool _hasDragGhost;
         private void PollDragGhost() {
             _hasDragGhost = false;
             if(_isDraggingEdge == false) return;
@@ -765,7 +783,6 @@ namespace MornLib {
             _dropTargetNode = target;
             if(target != null) ApplyDropTargetHighlight(target);
         }
-        private const int HighlightBorderWidth = 4;
         private void UpdateHighlights() {
             if(_target == null) return;
             var startID = _target.startStateID;
@@ -833,7 +850,6 @@ namespace MornLib {
             }
             return h;
         }
-        private const float NodeColumnSpacing = 400f;
         private Dictionary<int,Vector2> ComputeAutoLayout(MornStateMachine fsm) {
             var colWidth = NodeColumnSpacing;
             const float spacing = 30f;
@@ -1249,7 +1265,6 @@ namespace MornLib {
         }
         [System.Serializable]
         private class BehaviourClipboard { public string typeName; public string json; }
-        private const string BehaviourClipboardPrefix = "MORNSTATE_BEHAVIOUR:";
         private static void CopyBehaviourToClipboard(MornStateBehaviour state) {
             var c = new BehaviourClipboard {
                 typeName = state.GetType().AssemblyQualifiedName,
@@ -1437,10 +1452,6 @@ namespace MornLib {
             _portRowInfo[port] = (row,label,placeOnLeft,link);
             return row;
         }
-        private bool _isDraggingEdge;
-        private Port _draggingPort;
-        private Node _dropTargetNode;
-        private readonly Dictionary<Port,(VisualElement row,Label label,bool placeOnLeft,Connection link)> _portRowInfo = new();
         private static void ApplyPortRowSide(VisualElement row,Port port,Label label,bool placeOnLeft) {
             if(port.parent != row) row.Add(port);
             if(label.parent != row) row.Add(label);
@@ -1465,7 +1476,6 @@ namespace MornLib {
             if(_isDraggingEdge == false) return;
             HandleDragMove(e.position);
         }
-        private int _dragMoveCount;
         private void HandleDragMove(Vector2 pos) {
             if(_draggingPort != null && _portRowInfo.TryGetValue(_draggingPort,out var info)) {
                 var sourceNode = _draggingPort.GetFirstAncestorOfType<Node>();
@@ -1580,7 +1590,6 @@ namespace MornLib {
             meta.name = newName;
             EditorUtility.SetDirty(_target);
         }
-        private static readonly Dictionary<System.Type,MonoScript> _scriptCache = new();
         private static MonoScript FindScriptAsset(System.Type type) {
             if(type == null) return null;
             if(_scriptCache.TryGetValue(type,out var cached)) return cached;
@@ -1593,16 +1602,6 @@ namespace MornLib {
             _scriptCache[type] = found;
             return found;
         }
-        private bool _isDraggingBehaviour;
-        private int _behaviourDragFromStateID;
-        private int _behaviourDragFromIndex;
-        private VisualElement _behaviourDragSection;
-        private Node _behaviourDragHoverNode;
-        private VisualElement _behaviourDragGhost;
-        private VisualElement _behaviourDropIndicator;
-        private int _behaviourDropInsertIndex = -1;
-        private Vector2 _behaviourDragGhostSize;
-        private readonly Dictionary<Node,List<VisualElement>> _sectionsByNode = new();
         private void StartBehaviourDrag(int stateID,int behaviourIndex,VisualElement section) {
             _isDraggingBehaviour = true;
             _behaviourDragFromStateID = stateID;
