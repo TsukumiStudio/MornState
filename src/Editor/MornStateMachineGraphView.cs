@@ -62,11 +62,11 @@ namespace MornLib {
         }
         private void Reload() {
             if(_view == null) return;
-            var fsm = _pinned;
-            if(fsm == null) {
-                var go = Selection.activeGameObject;
-                if(go != null) fsm = go.GetComponentInParent<MornStateMachine>(true);
-            }
+            MornStateMachine fsm = null;
+            var go = Selection.activeGameObject;
+            if(go != null) fsm = go.GetComponentInParent<MornStateMachine>(true);
+            if(fsm != null) _pinned = fsm;
+            else fsm = _pinned;
             _view.LoadStateMachine(fsm);
             if(_hint != null) _hint.style.display = fsm == null ? DisplayStyle.Flex : DisplayStyle.None;
         }
