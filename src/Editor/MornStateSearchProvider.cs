@@ -41,9 +41,15 @@ namespace MornLib {
             var root = new Node { Name = _mode == Mode.AddBehaviour ? "Add Behaviour" : "Create State" };
             foreach(var t in types) {
                 var node = root;
-                var parts = string.IsNullOrEmpty(t.Namespace)
-                    ? Array.Empty<string>()
-                    : t.Namespace.Split('.');
+                var menu = t.GetCustomAttribute<MornStateMenuAttribute>();
+                string[] parts;
+                if(menu != null && !string.IsNullOrEmpty(menu.Path)) {
+                    parts = menu.Path.Split('/');
+                } else {
+                    parts = string.IsNullOrEmpty(t.Namespace)
+                        ? Array.Empty<string>()
+                        : t.Namespace.Split('.');
+                }
                 foreach(var p in parts) {
                     if(node.Children.TryGetValue(p,out var child) == false) {
                         child = new Node { Name = p };

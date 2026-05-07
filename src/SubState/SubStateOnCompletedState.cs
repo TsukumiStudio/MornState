@@ -2,6 +2,7 @@ using System;
 using UnityEngine;
 namespace MornLib {
     [Serializable]
+    [MornStateMenu("SubState")]
     public sealed class SubStateOnCompletedState : MornStateBehaviour {
         [SerializeField] private Connection _onExit;
         private SubStateController _controller;

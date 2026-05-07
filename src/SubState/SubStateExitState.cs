@@ -2,6 +2,7 @@ using System;
 using UnityEngine;
 namespace MornLib {
     [Serializable]
+    [MornStateMenu("SubState")]
     public sealed class SubStateExitState : MornStateBehaviour {
         [SerializeField] private ExitCode _exitCode;
         [SerializeField] private bool _autoDestroy = true;

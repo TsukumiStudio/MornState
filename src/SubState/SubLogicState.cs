@@ -5,6 +5,7 @@ using VContainer.Unity;
 #endif
 namespace MornLib {
     [Serializable]
+    [MornStateMenu("SubState")]
     public sealed class SubLogicState : SubBase {
         public enum SourceMode {
             Instantiate,

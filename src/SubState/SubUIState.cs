@@ -5,6 +5,7 @@ using VContainer.Unity;
 #endif
 namespace MornLib {
     [Serializable]
+    [MornStateMenu("SubState")]
     public sealed class SubUIState : SubBase {
         [SerializeField] private MornStateMachineInternal _prefab;
         [SerializeField] private bool _forceAutoDestroy;
