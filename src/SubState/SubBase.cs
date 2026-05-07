@@ -64,5 +64,25 @@ namespace MornLib {
         }
         protected abstract MornStateMachineInternal AcquireMachine();
         protected abstract void ReleaseMachine(bool autoDestroy);
+        /// <summary>Editor の Reload で SubStateExitState を発見するための参照元。
+        /// Instantiate モードなら prefab、SceneReference モードなら scene instance を返す実装にする。</summary>
+        protected virtual MornStateMachineInternal GetExitSourceMachine() => null;
+        [Button("Linkクリア")]
+        public void Clear() {
+            SetExitCodes(System.Array.Empty<ExitCode>());
+        }
+        [Button("Link再読み込み")]
+        public void Reload() {
+            var src = GetExitSourceMachine();
+            if(!(src is MornStateMachine fsm)) return;
+            var list = new List<ExitCode>();
+            foreach(var node in fsm.NodesMutable) {
+                if(node.behaviours == null) continue;
+                foreach(var b in node.behaviours) {
+                    if(b is SubStateExitState exit) list.Add(exit.ExitCode);
+                }
+            }
+            SetExitCodes(list);
+        }
     }
 }

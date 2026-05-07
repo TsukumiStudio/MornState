@@ -50,6 +50,9 @@ namespace MornLib {
             _runtime = null;
             _ownsRuntime = false;
         }
+        protected override MornStateMachineInternal GetExitSourceMachine() {
+            return _mode == SourceMode.Instantiate ? _prefab : _sceneInstance;
+        }
         private MornStateMachineInternal InstantiateMachine(MornStateMachineInternal prefab, Transform parent) {
 #if USE_VCONTAINER
             if(_resolver != null) return _resolver.Instantiate(prefab, parent);

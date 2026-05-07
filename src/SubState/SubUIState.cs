@@ -30,6 +30,7 @@ namespace MornLib {
             _runtime = UnityEngine.Object.Instantiate(_prefab, parent.transform);
             return _runtime;
         }
+        protected override MornStateMachineInternal GetExitSourceMachine() => _prefab;
         protected override void ReleaseMachine(bool autoDestroy) {
             if(_runtime == null) return;
             var shouldDestroy = autoDestroy || _forceAutoDestroy;
