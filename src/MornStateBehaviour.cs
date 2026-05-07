@@ -45,10 +45,12 @@ namespace MornLib {
                 _cts = null;
             }
         }
+        public virtual void OnAwake() {}
         public virtual void OnStateBegin() {}
         public virtual void OnStateUpdate() {}
         public virtual void OnStateEnd() {}
         protected virtual void OnValidate() {}
+        public int GetInstanceID() => _owner != null ? _owner.GetInstanceID() : 0;
         public Coroutine StartCoroutine(IEnumerator routine) => _owner != null ? _owner.StartCoroutine(routine) : null;
         public void StopCoroutine(Coroutine routine) { if(_owner != null && routine != null) _owner.StopCoroutine(routine); }
         public void StopCoroutine(IEnumerator routine) { if(_owner != null && routine != null) _owner.StopCoroutine(routine); }
