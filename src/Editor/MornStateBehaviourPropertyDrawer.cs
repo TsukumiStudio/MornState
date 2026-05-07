@@ -20,15 +20,51 @@ namespace MornLib
         {
             var iter = behaviourProperty.Copy();
             var end = iter.GetEndProperty();
+            var target = ResolveTarget(behaviourProperty);
+            var targetType = target?.GetType();
             if(iter.NextVisible(true))
             {
                 do
                 {
                     if(SerializedProperty.EqualContents(iter,end)) break;
                     if(skipConnections && IsConnection(iter)) continue;
-                    parent.Add(new PropertyField(iter.Copy()));
+                    var propCopy = iter.Copy();
+                    var field = new PropertyField(propCopy);
+                    var wrapper = WrapWithConditional(field,propCopy,targetType);
+                    parent.Add(wrapper);
                 } while(iter.NextVisible(false));
             }
+        }
+
+        private static VisualElement WrapWithConditional(PropertyField field,SerializedProperty property,System.Type targetType)
+        {
+            if(targetType == null) return field;
+            var fieldInfo = targetType.GetField(property.name,BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.FlattenHierarchy);
+            if(fieldInfo == null)
+            {
+                var t = targetType.BaseType;
+                while(t != null && fieldInfo == null)
+                {
+                    fieldInfo = t.GetField(property.name,BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                    t = t.BaseType;
+                }
+            }
+            if(fieldInfo == null) return field;
+            var showIf = fieldInfo.GetCustomAttribute<ShowIfAttribute>();
+            var hideIf = fieldInfo.GetCustomAttribute<HideIfAttribute>();
+            if(showIf == null && hideIf == null) return field;
+            var container = new VisualElement();
+            container.Add(field);
+            void Apply()
+            {
+                var visible = true;
+                if(showIf != null) visible &= MornEditorDrawerUtil.EvaluateShowIfCondition(showIf,property);
+                if(hideIf != null) visible &= !MornEditorDrawerUtil.EvaluateHideIfCondition(hideIf,property);
+                container.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+            }
+            Apply();
+            container.TrackSerializedObjectValue(property.serializedObject,_ => Apply());
+            return container;
         }
 
         public static void BuildMethodAttributes(VisualElement parent,SerializedProperty behaviourProperty)

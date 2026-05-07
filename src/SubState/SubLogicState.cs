@@ -12,15 +12,17 @@ namespace MornLib {
             SceneReference,
         }
         [SerializeField] private SourceMode _mode = SourceMode.Instantiate;
-        [SerializeField] private MornStateMachineInternal _prefab;
-        [SerializeField] private Transform _parent;
-        [SerializeField] private MornStateMachineInternal _sceneInstance;
+        [SerializeField, ShowIf(nameof(IsInstantiate))] private MornStateMachineInternal _prefab;
+        [SerializeField, ShowIf(nameof(IsInstantiate))] private Transform _parent;
+        [SerializeField, ShowIf(nameof(IsSceneReference))] private MornStateMachineInternal _sceneInstance;
         [SerializeField] private bool _forceAutoDestroy;
 #if USE_VCONTAINER
         [VContainer.Inject] private VContainer.IObjectResolver _resolver;
 #endif
         private MornStateMachineInternal _runtime;
         private bool _ownsRuntime;
+        private bool IsInstantiate => _mode == SourceMode.Instantiate;
+        private bool IsSceneReference => _mode == SourceMode.SceneReference;
         protected override MornStateMachineInternal AcquireMachine() {
             switch(_mode) {
                 case SourceMode.Instantiate:
