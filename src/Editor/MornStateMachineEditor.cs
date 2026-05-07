@@ -13,6 +13,8 @@ namespace MornLib {
             if(GUILayout.Button("Open Graph",GUILayout.Height(28))) {
                 MornStateMachineGraphWindow.OpenFor(target as MornStateMachine);
             }
+            // 派生クラスの [Button] / [OnInspectorGUI] を描画
+            MornEditorDrawerUtil.HandleCustomAttributesForObject(target,target);
         }
     }
 }
