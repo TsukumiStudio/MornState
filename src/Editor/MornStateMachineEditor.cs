@@ -10,6 +10,11 @@ namespace MornLib {
                 EditorGUILayout.ObjectField("Script",script,typeof(MonoScript),false);
             }
             EditorGUILayout.Space();
+            if(GUILayout.Button("Export FSM (Copy to Clipboard)",GUILayout.Height(24))) {
+                var text = MornStateExportUtil.Export(target as MornStateMachine);
+                EditorGUIUtility.systemCopyBuffer = text;
+                Debug.Log(text);
+            }
             if(GUILayout.Button("Open Graph",GUILayout.Height(28))) {
                 MornStateMachineGraphWindow.OpenFor(target as MornStateMachine);
             }

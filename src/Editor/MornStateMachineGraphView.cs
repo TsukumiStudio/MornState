@@ -232,7 +232,7 @@ namespace MornLib {
                     if(Vector2.Distance(cur,pos) > 0.5f) {
                         node.SetPosition(new Rect(pos.x,pos.y,0,0));
                         var off = cur - pos;
-                        node.transform.position = new Vector3(off.x,off.y,0);
+                        node.style.translate = new StyleTranslate(new Translate(off.x,off.y,0));
                         _animations[node] = new AnimState { start = cur,end = pos,elapsed = 0f,duration = 0.25f };
                     }
                 }
@@ -280,7 +280,7 @@ namespace MornLib {
                 var restPos = animate ? pos : initialPos;
                 node.SetPosition(new Rect(restPos.x,restPos.y,0,0));
                 var offset = initialPos - restPos;
-                node.transform.position = new Vector3(offset.x,offset.y,0);
+                node.style.translate = new StyleTranslate(new Translate(offset.x,offset.y,0));
                 node.style.visibility = Visibility.Hidden;
                 EventCallback<GeometryChangedEvent> firstLayout = null;
                 firstLayout = _ => {
@@ -595,7 +595,7 @@ namespace MornLib {
         private struct AnimState { public Vector2 start; public Vector2 end; public float elapsed; public float duration; }
         private static Vector2 GetAbsolutePosition(Node node) {
             var p = node.GetPosition().position;
-            var t = node.transform.position;
+            var t = node.resolvedStyle.translate;
             return new Vector2(p.x + t.x,p.y + t.y);
         }
         private void TickAnimations() {
@@ -613,7 +613,7 @@ namespace MornLib {
                 var eased = 1f - Mathf.Pow(1f - t,3f);
                 var cur = Vector2.Lerp(a.start,a.end,eased);
                 var off = cur - a.end;
-                node.transform.position = new Vector3(off.x,off.y,0);
+                node.style.translate = new StyleTranslate(new Translate(off.x,off.y,0));
                 if(t >= 1f) finished.Add(node);
                 else _animations[node] = a;
             }
@@ -1397,7 +1397,6 @@ namespace MornLib {
                 if(e.button != 1) return;
                 ShowBehaviourContextMenu(stateID,behaviourIndex,state);
                 e.StopPropagation();
-                e.PreventDefault();
             },TrickleDown.TrickleDown);
             section.Add(header);
             var nodeIndex = fsm.NodesMutable.FindIndex(n => n.id == stateID);
