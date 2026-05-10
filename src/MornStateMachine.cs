@@ -34,7 +34,7 @@ namespace MornLib {
             _stateEnterCounts.Clear();
             _transitionCounts.Clear();
             ReinjectOwners();
-            foreach(var n in _nodes) foreach(var b in n.behaviours) if(b != null) b.RebuildConnectionCache();
+            foreach(var n in _nodes) foreach(var b in n.behaviours) if(b != null) b.RebuildStateLinkCache();
             foreach(var n in _nodes) foreach(var b in n.behaviours) if(b != null) b.OnAwake();
         }
         private void Start() {

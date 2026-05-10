@@ -12,7 +12,7 @@ namespace MornLib
         [SerializeField] private VideoPlayer _videoPlayer;
         [SerializeField] private VideoClip _videoClip;
         [SerializeField] private bool _autoPlay = true;
-        [SerializeField] private Connection _onPlay;
+        [SerializeField] private StateLink _onPlay;
 
         public override void OnStateBegin()
         {

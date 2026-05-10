@@ -12,7 +12,7 @@ namespace MornLib
         [SerializeField] private float _duration;
         [SerializeField] private float _endValue;
         [SerializeField] private MornEaseType _easeType;
-        [SerializeField] private Connection _nextState;
+        [SerializeField] private StateLink _nextState;
         private float _startTime;
         private float _startValue1;
         private float _startValue2;

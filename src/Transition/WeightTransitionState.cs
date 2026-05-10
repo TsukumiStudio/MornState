@@ -8,7 +8,7 @@ namespace MornLib
         [Serializable]
         private struct Entry
         {
-            public Connection Next;
+            public StateLink Next;
             public float Weight;
         }
 

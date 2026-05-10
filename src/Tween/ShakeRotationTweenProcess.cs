@@ -12,7 +12,7 @@ namespace MornLib
         [SerializeField] private float _duration;
         [SerializeField] private int _fps;
         [SerializeField] private Vector3 _power;
-        [SerializeField] private Connection _nextState;
+        [SerializeField] private StateLink _nextState;
         private float _startTime;
         private float _nextTime;
         private Quaternion _baseRotation;

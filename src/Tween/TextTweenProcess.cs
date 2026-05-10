@@ -10,7 +10,7 @@ namespace MornLib
     {
         [SerializeField] private TMP_Text _target;
         [SerializeField] private float _duration;
-        [SerializeField] private Connection _nextState;
+        [SerializeField] private StateLink _nextState;
         private float _startTime;
         private int _totalCharacters;
         public override float Progress => Mathf.Clamp01((Time.time - _startTime) / _duration);

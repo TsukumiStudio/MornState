@@ -4,7 +4,7 @@ namespace MornLib {
     [Serializable]
     [MornStateMenu("SubState")]
     public sealed class SubStateOnCompletedState : MornStateBehaviour {
-        [SerializeField] private Connection _onExit;
+        [SerializeField] private StateLink _onExit;
         private SubStateController _controller;
         public override void OnStateBegin() {
             if(gameObject == null) return;

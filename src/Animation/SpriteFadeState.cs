@@ -11,7 +11,7 @@ namespace MornLib
         [SerializeField] private SpriteRenderer _renderer;
         [SerializeField] private float _minDuration = 1f;
         [SerializeField] private float _maxDuration = 2f;
-        [SerializeField] private Connection _end;
+        [SerializeField] private StateLink _end;
         
         private float _startTime;
         private float _duration;

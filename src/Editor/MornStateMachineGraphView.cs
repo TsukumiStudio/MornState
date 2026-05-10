@@ -15,17 +15,43 @@ namespace MornLib {
         }
         public static void OpenFor(MornStateMachine fsm) {
             var win = Open();
-            win._pinned = fsm;
+            win.SetPinned(fsm);
             win.Focus();
             win.Reload();
         }
+        private const string PinnedGlobalIdKey = "MornState.Graph.PinnedGlobalId";
+        private MornStateMachine _pinned;
         private MornStateMachineGraphView _view;
         private Label _hint;
-        private MornStateMachine _pinned;
+        private UnityEditor.UIElements.ObjectField _targetField;
+        private VisualElement _sidebar;
+        private ScrollView _sidebarScroll;
+        private MornStateMachine _sidebarRoot;
         private void OnEnable() {
+            var content = new VisualElement();
+            content.style.flexDirection = FlexDirection.Row;
+            content.style.flexGrow = 1;
+            rootVisualElement.Add(content);
+            _sidebar = new VisualElement();
+            _sidebar.style.width = 220;
+            _sidebar.style.borderRightWidth = 1;
+            _sidebar.style.borderRightColor = new Color(0,0,0,0.4f);
+            _sidebar.style.paddingTop = 4;
+            _sidebar.style.paddingLeft = 4;
+            _sidebar.style.paddingRight = 4;
+            _sidebar.style.paddingBottom = 4;
+            var sidebarHeader = new Label("SubState Hierarchy") { style = { unityFontStyleAndWeight = FontStyle.Bold, marginBottom = 4 } };
+            _sidebar.Add(sidebarHeader);
+            _sidebarScroll = new ScrollView(ScrollViewMode.Vertical);
+            _sidebarScroll.style.flexGrow = 1;
+            _sidebar.Add(_sidebarScroll);
+            content.Add(_sidebar);
+            var graphArea = new VisualElement();
+            graphArea.style.flexGrow = 1;
+            content.Add(graphArea);
             _view = new MornStateMachineGraphView();
             _view.style.flexGrow = 1;
-            rootVisualElement.Add(_view);
+            graphArea.Add(_view);
             _hint = new Label("MornStateMachine を Hierarchy で選択するか、Inspector の Open Graph ボタンを押してください。");
             _hint.style.color = new Color(0.8f,0.8f,0.8f);
             _hint.style.unityTextAlign = TextAnchor.MiddleCenter;
@@ -39,10 +65,25 @@ namespace MornLib {
             hintWrapper.style.alignItems = Align.Center;
             hintWrapper.pickingMode = PickingMode.Ignore;
             hintWrapper.Add(_hint);
-            rootVisualElement.Add(hintWrapper);
+            graphArea.Add(hintWrapper);
             var toolbar = new Toolbar();
+            _targetField = new UnityEditor.UIElements.ObjectField {
+                objectType = typeof(MornStateMachine),
+                allowSceneObjects = true,
+            };
+            _targetField.style.width = 200;
+            _targetField.RegisterValueChangedCallback(e => {
+                if(e.newValue is MornStateMachine fsm) {
+                    _sidebarRoot = fsm;
+                    SetPinned(fsm);
+                    Reload();
+                }
+            });
+            toolbar.Add(_targetField);
             var refreshBtn = new ToolbarButton(Reload) { text = "Refresh" };
             toolbar.Add(refreshBtn);
+            var focusBtn = new ToolbarButton(() => _view?.FrameAllNodes()) { text = "Focus" };
+            toolbar.Add(focusBtn);
             rootVisualElement.Insert(0,toolbar);
             Selection.selectionChanged += Reload;
             Undo.undoRedoPerformed += Reload;
@@ -65,10 +106,86 @@ namespace MornLib {
             MornStateMachine fsm = null;
             var go = Selection.activeGameObject;
             if(go != null) fsm = go.GetComponentInParent<MornStateMachine>(true);
-            if(fsm != null) _pinned = fsm;
-            else fsm = _pinned;
+            if(fsm != null && fsm != _pinned) {
+                _sidebarRoot = fsm;
+                SetPinned(fsm);
+            } else if(fsm == null) {
+                fsm = ResolvePinned();
+                if(_sidebarRoot == null) _sidebarRoot = fsm;
+            }
+            ApplyFsm(fsm);
+        }
+        private void NavigateTo(MornStateMachine fsm) {
+            if(fsm == null || fsm == _pinned) return;
+            SetPinned(fsm);
+            ApplyFsm(fsm);
+        }
+        private void ApplyFsm(MornStateMachine fsm) {
+            if(_view == null) return;
             _view.LoadStateMachine(fsm);
             if(_hint != null) _hint.style.display = fsm == null ? DisplayStyle.Flex : DisplayStyle.None;
+            if(_targetField != null && _targetField.value != fsm) _targetField.SetValueWithoutNotify(fsm);
+            RefreshSidebar(fsm);
+        }
+        private void RefreshSidebar(MornStateMachine current) {
+            if(_sidebarScroll == null) return;
+            _sidebarScroll.Clear();
+            var root = _sidebarRoot != null ? _sidebarRoot : current;
+            if(root == null) return;
+            var visited = new HashSet<MornStateMachine>();
+            BuildSidebarEntry(_sidebarScroll,root,0,current,visited);
+        }
+        private void BuildSidebarEntry(VisualElement parent,MornStateMachine fsm,int depth,MornStateMachine highlight,HashSet<MornStateMachine> visited) {
+            if(fsm == null || visited.Contains(fsm)) return;
+            visited.Add(fsm);
+            var btn = new Button(() => NavigateTo(fsm)) { text = fsm.name };
+            btn.style.marginLeft = depth * 12;
+            btn.style.unityTextAlign = TextAnchor.MiddleLeft;
+            btn.style.paddingTop = 2;
+            btn.style.paddingBottom = 2;
+            btn.style.paddingLeft = 6;
+            btn.style.paddingRight = 6;
+            if(fsm == highlight) {
+                btn.style.backgroundColor = new Color(0.20f,0.55f,0.85f,0.40f);
+                btn.style.unityFontStyleAndWeight = FontStyle.Bold;
+            }
+            parent.Add(btn);
+            foreach(var node in fsm.NodesMutable) {
+                if(node.behaviours == null) continue;
+                foreach(var b in node.behaviours) {
+                    if(b is not SubBase sub) continue;
+                    var child = ResolveSubExitSource(sub);
+                    if(child is MornStateMachine cm) BuildSidebarEntry(parent,cm,depth + 1,highlight,visited);
+                }
+            }
+        }
+        private static MornStateMachineInternal ResolveSubExitSource(SubBase sub) {
+            var method = typeof(SubBase).GetMethod("GetExitSourceMachine",
+                BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public);
+            if(method == null) return null;
+            return method.Invoke(sub,null) as MornStateMachineInternal;
+        }
+        private void SetPinned(MornStateMachine fsm) {
+            _pinned = fsm;
+            var id = fsm != null ? GlobalObjectId.GetGlobalObjectIdSlow(fsm).ToString() : "";
+            SessionState.SetString(PinnedGlobalIdKey,id);
+        }
+        private MornStateMachine ResolvePinned() {
+            if(_pinned != null) return _pinned;
+            var id = SessionState.GetString(PinnedGlobalIdKey,"");
+            if(string.IsNullOrEmpty(id)) return null;
+            if(GlobalObjectId.TryParse(id,out var gid)) {
+                var obj = GlobalObjectId.GlobalObjectIdentifierToObjectSlow(gid);
+                if(obj is MornStateMachine fsm) {
+                    _pinned = fsm;
+                    return fsm;
+                }
+                if(obj is GameObject g) {
+                    _pinned = g.GetComponentInChildren<MornStateMachine>(true);
+                    return _pinned;
+                }
+            }
+            return null;
         }
     }
     public class MornStateMachineGraphView : GraphView {
@@ -83,7 +200,7 @@ namespace MornLib {
         private bool _edgeLayoutPending;
         private int _hoveredNodeID;
         private readonly HashSet<int> _hoveredRelatedIDs = new();
-        private readonly Dictionary<int,string> _nodeSig = new();
+        private readonly Dictionary<int,int> _nodeSig = new();
         private readonly Dictionary<Node,AnimState> _animations = new();
         private double _lastAnimTime;
         private int _lastCurrentSnapshot = int.MinValue;
@@ -94,7 +211,7 @@ namespace MornLib {
         private bool _isDraggingEdge;
         private Port _draggingPort;
         private Node _dropTargetNode;
-        private readonly Dictionary<Port,(VisualElement row,Label label,bool placeOnLeft,Connection link)> _portRowInfo = new();
+        private readonly Dictionary<Port,(VisualElement row,Label label,bool placeOnLeft,StateLink link)> _portRowInfo = new();
         private int _dragMoveCount;
         private bool _isDraggingBehaviour;
         private int _behaviourDragFromStateID;
@@ -177,15 +294,20 @@ namespace MornLib {
             public Port outputPort;
             public Node targetNode;
             public MornStateBehaviour source;
-            public Connection link;
+            public StateLink link;
         }
-        private static string ComputeNodeSig(MornStateMachine.StateNode meta) {
-            if(meta.behaviours == null) return "";
-            var sb = new System.Text.StringBuilder();
-            foreach(var b in meta.behaviours) {
-                if(b == null) sb.Append("|null"); else sb.Append("|").Append(b.GetType().FullName);
+        private static int ComputeNodeSig(MornStateMachine.StateNode meta) {
+            if(meta.behaviours == null) return 0;
+            unchecked {
+                var hash = 17;
+                foreach(var b in meta.behaviours) {
+                    hash = hash * 31 + (b == null ? 0 : b.GetType().GetHashCode());
+                    var count = 0;
+                    if(b != null) foreach(var _ in EnumerateStateLinks(b)) count++;
+                    hash = hash * 31 + count;
+                }
+                return hash;
             }
-            return sb.ToString();
         }
         private bool IsStructurallySame(MornStateMachine fsm) {
             if(fsm == null || _target != fsm) return false;
@@ -204,7 +326,7 @@ namespace MornLib {
                 if(_nodeByID.TryGetValue(meta.id,out var fromNode) == false) continue;
                 foreach(var b in meta.behaviours) {
                     if(b == null) continue;
-                    foreach(var (_,link) in EnumerateConnectionFields(b)) {
+                    foreach(var link in EnumerateStateLinks(b)) {
                         if(link == null || link.stateID == 0) continue;
                         if(_nodeByID.TryGetValue(link.stateID,out var toNode) == false) continue;
                         var outPort = FindOutputPortFor(fromNode,b,link);
@@ -217,6 +339,56 @@ namespace MornLib {
         }
         public void ForceFullReload() {
             _hasLoadedOnce = false;
+        }
+        private void ReflowNodePositions(MornStateMachine fsm) {
+            if(fsm == null) return;
+            var positions = ComputeAutoLayout(fsm);
+            _layoutPositions.Clear();
+            foreach(var kv in positions) _layoutPositions[kv.Key] = kv.Value;
+            foreach(var meta in fsm.Nodes) {
+                if(_nodeByID.TryGetValue(meta.id,out var n) == false) continue;
+                if(positions.TryGetValue(meta.id,out var pos) == false) continue;
+                var cur = GetAbsolutePosition(n);
+                if(Vector2.Distance(cur,pos) <= 0.5f) continue;
+                n.SetPosition(new Rect(pos.x,pos.y,0,0));
+                var off = cur - pos;
+                n.style.translate = new StyleTranslate(new Translate(off.x,off.y,0));
+                _animations[n] = new AnimState { start = cur,end = pos,elapsed = 0f,duration = 0.25f };
+            }
+            _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
+        }
+        public void FrameAllNodes() {
+            if(_nodeByID.Count == 0) return;
+            schedule.Execute(FrameAllNodesNow).StartingIn(0);
+        }
+        private void FrameAllNodesNow() {
+            if(_nodeByID.Count == 0) return;
+            var hasBounds = false;
+            var min = new Vector2(float.PositiveInfinity,float.PositiveInfinity);
+            var max = new Vector2(float.NegativeInfinity,float.NegativeInfinity);
+            foreach(var node in _nodeByID.Values) {
+                var pos = GetAbsolutePosition(node);
+                var size = new Vector2(node.layout.width,node.layout.height);
+                if(size.x <= 0 || size.y <= 0 || float.IsNaN(size.x) || float.IsNaN(size.y)) continue;
+                min.x = Mathf.Min(min.x,pos.x);
+                min.y = Mathf.Min(min.y,pos.y);
+                max.x = Mathf.Max(max.x,pos.x + size.x);
+                max.y = Mathf.Max(max.y,pos.y + size.y);
+                hasBounds = true;
+            }
+            if(hasBounds == false) return;
+            const float padding = 60f;
+            min -= new Vector2(padding,padding);
+            max += new Vector2(padding,padding);
+            var contentSize = max - min;
+            var viewport = contentRect;
+            if(viewport.width <= 0 || viewport.height <= 0 || contentSize.x <= 0 || contentSize.y <= 0) return;
+            var scale = Mathf.Min(viewport.width / contentSize.x,viewport.height / contentSize.y);
+            scale = Mathf.Clamp(scale,0.1f,1f);
+            var contentCenter = (min + max) * 0.5f;
+            var viewportCenter = new Vector2(viewport.width,viewport.height) * 0.5f;
+            var position = viewportCenter - contentCenter * scale;
+            UpdateViewTransform(position,new Vector3(scale,scale,1f));
         }
         public void LoadStateMachine(MornStateMachine fsm) {
             if(IsStructurallySame(fsm)) {
@@ -238,10 +410,12 @@ namespace MornLib {
                 }
                 RebuildEdgeRecords(fsm);
                 UpdateHighlights();
+                schedule.Execute(SettleColumnHeights).StartingIn(0);
                 return;
             }
             _isClearingForReload = true;
             _edgeLayoutPending = true;
+            var targetChanged = _target != fsm;
             var oldPositions = new Dictionary<int,Vector2>();
             foreach(var pair in _nodeByID) {
                 oldPositions[pair.Key] = GetAbsolutePosition(pair.Value);
@@ -261,7 +435,7 @@ namespace MornLib {
             var positions = ComputeAutoLayout(fsm);
             _layoutPositions.Clear();
             foreach(var kv in positions) _layoutPositions[kv.Key] = kv.Value;
-            var animate = _hasLoadedOnce;
+            var animate = _hasLoadedOnce && targetChanged == false;
             var pendingLayoutCount = new[] { fsm.Nodes.Count };
             foreach(var meta in fsm.Nodes) {
                 var pos = positions.TryGetValue(meta.id,out var p) ? p : new Vector2(40,40);
@@ -306,6 +480,45 @@ namespace MornLib {
             UpdateHighlights();
             _isClearingForReload = false;
             if(pendingLayoutCount[0] <= 0) _edgeLayoutPending = false;
+            schedule.Execute(SettleColumnHeights).StartingIn(0);
+        }
+        private void SettleColumnHeights() {
+            if(_nodeByID.Count == 0) return;
+            const float spacing = 30f;
+            var columns = new SortedDictionary<float,List<(int id,Node node,float y,float h)>>();
+            foreach(var pair in _nodeByID) {
+                var node = pair.Value;
+                if(node.layout.width <= 0 || float.IsNaN(node.layout.height)) return;
+                if(_layoutPositions.TryGetValue(pair.Key,out var pos) == false) continue;
+                var key = Mathf.Round(pos.x);
+                if(columns.TryGetValue(key,out var list) == false) {
+                    list = new List<(int,Node,float,float)>();
+                    columns[key] = list;
+                }
+                list.Add((pair.Key,node,pos.y,node.layout.height));
+            }
+            var changed = false;
+            foreach(var col in columns.Values) {
+                col.Sort((a,b) => a.y.CompareTo(b.y));
+                var y = 40f;
+                foreach(var entry in col) {
+                    var newPos = new Vector2(entry.node.GetPosition().x,y);
+                    var cur = GetAbsolutePosition(entry.node);
+                    if(Mathf.Abs(cur.y - y) > 0.5f) {
+                        entry.node.SetPosition(new Rect(newPos.x,newPos.y,0,0));
+                        var off = cur - newPos;
+                        entry.node.style.translate = new StyleTranslate(new Translate(off.x,off.y,0));
+                        _animations[entry.node] = new AnimState { start = cur,end = newPos,elapsed = 0f,duration = 0.2f };
+                        _layoutPositions[entry.id] = newPos;
+                        changed = true;
+                    }
+                    y += entry.h + spacing;
+                }
+            }
+            if(changed) {
+                _edgesLayer?.MarkDirtyRepaint();
+                _edgesLayerFront?.MarkDirtyRepaint();
+            }
         }
         private void DrawCustomEdges(MeshGenerationContext ctx) {
             if(_edgeLayoutPending) return;
@@ -320,11 +533,12 @@ namespace MornLib {
                 var sourceNode = rec.outputPort.GetFirstAncestorOfType<Node>();
                 if(sourceNode == null) continue;
                 var sourceID = sourceNode.userData is int ssid ? ssid : 0;
-                var emphasized = _hoveredNodeID != 0 && sourceID == _hoveredNodeID;
-                var dimmed = _hoveredNodeID != 0 && emphasized == false;
-                p.strokeColor = dimmed
-                    ? new Color(0.85f,0.85f,0.85f,0.18f)
-                    : new Color(0.85f,0.85f,0.85f,emphasized ? 1f : 0.65f);
+                var nodeEmphasized = _hoveredNodeID != 0 && sourceID == _hoveredNodeID;
+                var edgeEmphasized = _hoveredEdgeIndex == ri;
+                var emphasized = nodeEmphasized || edgeEmphasized;
+                p.strokeColor = emphasized
+                    ? new Color(1f,0.92f,0.45f,1f)
+                    : new Color(0.85f,0.85f,0.85f,0.65f);
                 p.lineWidth = emphasized ? 3.2f : 2.5f;
                 var sourceCenter = sourceNode.worldBound.center;
                 var portCenter = rec.outputPort.worldBound.center;
@@ -411,11 +625,12 @@ namespace MornLib {
                 var sourceNode = rec.outputPort.GetFirstAncestorOfType<Node>();
                 if(sourceNode == null || sourceNode == rec.targetNode) continue;
                 var sourceID = sourceNode.userData is int ssid ? ssid : 0;
-                var emphasized = _hoveredNodeID != 0 && sourceID == _hoveredNodeID;
-                var dimmed = _hoveredNodeID != 0 && emphasized == false;
-                p.strokeColor = dimmed
-                    ? new Color(0.85f,0.85f,0.85f,0.18f)
-                    : new Color(0.85f,0.85f,0.85f,emphasized ? 1f : 0.65f);
+                var nodeEmphasized = _hoveredNodeID != 0 && sourceID == _hoveredNodeID;
+                var edgeEmphasized = _hoveredEdgeIndex == ri;
+                var emphasized = nodeEmphasized || edgeEmphasized;
+                p.strokeColor = emphasized
+                    ? new Color(1f,0.92f,0.45f,1f)
+                    : new Color(0.85f,0.85f,0.85f,0.65f);
                 p.lineWidth = emphasized ? 3.2f : 2.5f;
                 var sourceCenter = sourceNode.worldBound.center;
                 var portCenter = rec.outputPort.worldBound.center;
@@ -582,8 +797,8 @@ namespace MornLib {
                 foreach(var b in n.behaviours) {
                     if(b == null) continue;
                     foreach(var f in b.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)) {
-                        if(f.FieldType != typeof(Connection)) continue;
-                        if(f.GetValue(b) is not Connection link) continue;
+                        if(f.FieldType != typeof(StateLink)) continue;
+                        if(f.GetValue(b) is not StateLink link) continue;
                         if(link == null || link.stateID != nodeID) continue;
                         if(oldPositions.TryGetValue(n.id,out var op)) return op;
                         if(positions.TryGetValue(n.id,out var np)) return np;
@@ -620,6 +835,7 @@ namespace MornLib {
             foreach(var n in finished) _animations.Remove(n);
             _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
         }
+        private double _lastStructuralCheckTime;
         private void OnEditorUpdate() {
             TickAnimations();
             var snapshot = Application.isPlaying && _target != null ? _target.CurrentStateID : 0;
@@ -629,8 +845,26 @@ namespace MornLib {
             }
             PollDragGhost();
             ReconcilePortSides();
+            SyncPortLabels();
             UpdateRuntimeBadges();
+            DetectStructuralChange();
             _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
+        }
+        private void DetectStructuralChange() {
+            if(_target == null || _hasLoadedOnce == false) return;
+            var now = EditorApplication.timeSinceStartup;
+            if(now - _lastStructuralCheckTime < 0.25) return;
+            _lastStructuralCheckTime = now;
+            if(_isDraggingEdge || _isDraggingBehaviour) return;
+            foreach(var meta in _target.Nodes) {
+                if(_nodeByID.ContainsKey(meta.id) == false) { LoadStateMachine(_target); return; }
+                var sig = ComputeNodeSig(meta);
+                if(_nodeSig.TryGetValue(meta.id,out var old) == false || old != sig) {
+                    LoadStateMachine(_target);
+                    return;
+                }
+            }
+            if(_target.Nodes.Count != _nodeByID.Count) LoadStateMachine(_target);
         }
         private Vector2 ComputeEdgeBadgeLocal(EdgeRecord rec,Node sourceNode,int recIndex,Dictionary<int,int> backIdx) {
             var sourceCenter = sourceNode.worldBound.center;
@@ -735,6 +969,20 @@ namespace MornLib {
                 _edgeBadges.Remove(k);
             }
         }
+        private double _lastPortLabelSyncTime;
+        private void SyncPortLabels() {
+            if(_portRowInfo.Count == 0) return;
+            var now = EditorApplication.timeSinceStartup;
+            if(now - _lastPortLabelSyncTime < 0.2) return;
+            _lastPortLabelSyncTime = now;
+            foreach(var pair in _portRowInfo) {
+                var link = pair.Value.link;
+                var label = pair.Value.label;
+                if(link == null || label == null) continue;
+                if(string.IsNullOrEmpty(link.name)) continue;
+                if(label.text != link.name) label.text = link.name;
+            }
+        }
         private void ReconcilePortSides() {
             if(_portRowInfo.Count == 0) return;
             _portsToUpdate.Clear();
@@ -809,12 +1057,94 @@ namespace MornLib {
             overlay.style.borderLeftWidth = width;
             overlay.style.borderRightWidth = width;
         }
-        private static IEnumerable<(string fieldName,Connection link)> EnumerateConnectionFields(MornStateBehaviour state) {
-            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-            foreach(var f in state.GetType().GetFields(flags)) {
-                if(f.FieldType != typeof(Connection)) continue;
-                if(f.GetValue(state) is Connection link) yield return (f.Name,link);
+        private const int MaxStateLinkScanDepth = 6;
+        private enum FieldKind : byte { StateLink, Recurse }
+        private readonly struct FieldEntry {
+            public readonly FieldInfo Field;
+            public readonly FieldKind Kind;
+            public FieldEntry(FieldInfo f,FieldKind k) { Field = f; Kind = k; }
+        }
+        private static readonly Dictionary<System.Type,FieldEntry[]> _fieldCache = new();
+        private static FieldEntry[] GetFieldEntries(System.Type t) {
+            if(_fieldCache.TryGetValue(t,out var cached)) return cached;
+            var list = new List<FieldEntry>();
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
+            for(var cur = t;cur != null && cur != typeof(object);cur = cur.BaseType) {
+                foreach(var f in cur.GetFields(flags)) {
+                    if(f.IsStatic) continue;
+                    if(IsSerializedField(f) == false) continue;
+                    var ft = f.FieldType;
+                    if(ft == typeof(StateLink)) { list.Add(new FieldEntry(f,FieldKind.StateLink)); continue; }
+                    if(typeof(UnityEngine.Object).IsAssignableFrom(ft)) continue;
+                    if(ft.IsPrimitive || ft.IsEnum) continue;
+                    if(ft == typeof(string)) continue;
+                    list.Add(new FieldEntry(f,FieldKind.Recurse));
+                }
             }
+            var arr = list.ToArray();
+            _fieldCache[t] = arr;
+            return arr;
+        }
+        private static bool IsSerializedField(FieldInfo f) {
+            if(f.IsPublic && f.GetCustomAttribute<System.NonSerializedAttribute>() == null) return true;
+            return f.GetCustomAttribute<SerializeField>() != null || f.GetCustomAttribute<SerializeReference>() != null;
+        }
+        private static IEnumerable<StateLink> EnumerateStateLinks(MornStateBehaviour state) {
+            if(state == null) yield break;
+            var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            foreach(var l in ScanLinks(state,visited,0)) yield return l;
+        }
+        private static IEnumerable<StateLink> ScanLinks(object obj,HashSet<object> visited,int depth) {
+            if(obj == null || depth > MaxStateLinkScanDepth || visited.Add(obj) == false) yield break;
+            if(obj is System.Collections.IList list && obj is not string) {
+                for(var i = 0;i < list.Count;i++) {
+                    var item = list[i];
+                    if(item == null) continue;
+                    if(item is StateLink link) { yield return link; continue; }
+                    foreach(var l in ScanLinks(item,visited,depth + 1)) yield return l;
+                }
+                yield break;
+            }
+            var entries = GetFieldEntries(obj.GetType());
+            for(var i = 0;i < entries.Length;i++) {
+                var entry = entries[i];
+                var value = entry.Field.GetValue(obj);
+                if(value == null) continue;
+                if(entry.Kind == FieldKind.StateLink) { yield return (StateLink)value; continue; }
+                foreach(var l in ScanLinks(value,visited,depth + 1)) yield return l;
+            }
+        }
+        private static IEnumerable<(string path,StateLink link)> EnumerateStateLinkFields(MornStateBehaviour state) {
+            if(state == null) yield break;
+            var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            foreach(var pair in ScanLinksWithPath(state,"",visited,0)) yield return pair;
+        }
+        private static IEnumerable<(string path,StateLink link)> ScanLinksWithPath(object obj,string path,HashSet<object> visited,int depth) {
+            if(obj == null || depth > MaxStateLinkScanDepth || visited.Add(obj) == false) yield break;
+            if(obj is System.Collections.IList list && obj is not string) {
+                for(var i = 0;i < list.Count;i++) {
+                    var item = list[i];
+                    if(item == null) continue;
+                    var childPath = path.Length == 0 ? $"[{i}]" : $"{path}[{i}]";
+                    if(item is StateLink link) { yield return (childPath,link); continue; }
+                    foreach(var pair in ScanLinksWithPath(item,childPath,visited,depth + 1)) yield return pair;
+                }
+                yield break;
+            }
+            var entries = GetFieldEntries(obj.GetType());
+            for(var i = 0;i < entries.Length;i++) {
+                var entry = entries[i];
+                var value = entry.Field.GetValue(obj);
+                if(value == null) continue;
+                var childPath = path.Length == 0 ? entry.Field.Name : $"{path}.{entry.Field.Name}";
+                if(entry.Kind == FieldKind.StateLink) { yield return (childPath,(StateLink)value); continue; }
+                foreach(var pair in ScanLinksWithPath(value,childPath,visited,depth + 1)) yield return pair;
+            }
+        }
+        private sealed class ReferenceEqualityComparer : IEqualityComparer<object> {
+            public static readonly ReferenceEqualityComparer Instance = new();
+            public new bool Equals(object x,object y) => ReferenceEquals(x,y);
+            public int GetHashCode(object obj) => System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj);
         }
         private static Port FindInputPort(Node node,bool right) {
             var container = right ? node.outputContainer : node.inputContainer;
@@ -823,12 +1153,12 @@ namespace MornLib {
             }
             return null;
         }
-        private static Port FindOutputPortFor(Node node,MornStateBehaviour state,Connection link) {
+        private static Port FindOutputPortFor(Node node,MornStateBehaviour state,StateLink link) {
             Port found = null;
             node.Query<Port>().ForEach(p => {
                 if(found != null) return;
                 if(p.direction != Direction.Output) return;
-                if(p.userData is System.ValueTuple<MornStateBehaviour,Connection> tup && tup.Item1 == state && tup.Item2 == link) {
+                if(p.userData is System.ValueTuple<MornStateBehaviour,StateLink> tup && tup.Item1 == state && tup.Item2 == link) {
                     found = p;
                 }
             });
@@ -843,7 +1173,7 @@ namespace MornLib {
                 h += 50f;
                 var fieldCount = 0;
                 foreach(var f in b.GetType().GetFields(flags)) {
-                    if(f.FieldType == typeof(Connection)) h += 22f;
+                    if(f.FieldType == typeof(StateLink)) h += 22f;
                     else fieldCount++;
                 }
                 h += fieldCount * 22f;
@@ -862,7 +1192,7 @@ namespace MornLib {
             foreach(var n in fsm.Nodes) {
                 foreach(var b in n.behaviours) {
                     if(b == null) continue;
-                    foreach(var (_,link) in EnumerateConnectionFields(b)) {
+                    foreach(var link in EnumerateStateLinks(b)) {
                         if(link == null || link.stateID == 0) continue;
                         if(allIDs.Contains(link.stateID) && adj[n.id].Contains(link.stateID) == false) {
                             adj[n.id].Add(link.stateID);
@@ -1114,6 +1444,19 @@ namespace MornLib {
             highlightOverlay.style.borderBottomLeftRadius = cornerRadius;
             highlightOverlay.style.borderBottomRightRadius = cornerRadius;
             node.Add(highlightOverlay);
+            var dimOverlay = new VisualElement { name = "morn-dim-overlay" };
+            dimOverlay.pickingMode = PickingMode.Ignore;
+            dimOverlay.style.position = Position.Absolute;
+            dimOverlay.style.left = 0;
+            dimOverlay.style.right = 0;
+            dimOverlay.style.top = 0;
+            dimOverlay.style.bottom = 0;
+            dimOverlay.style.borderTopLeftRadius = cornerRadius;
+            dimOverlay.style.borderTopRightRadius = cornerRadius;
+            dimOverlay.style.borderBottomLeftRadius = cornerRadius;
+            dimOverlay.style.borderBottomRightRadius = cornerRadius;
+            dimOverlay.style.backgroundColor = new Color(0f,0f,0f,0f);
+            node.Add(dimOverlay);
             node.capabilities &= ~Capabilities.Movable;
             node.capabilities &= ~Capabilities.Collapsible;
             var collapseButton = node.titleContainer.Q("title-button-container");
@@ -1181,7 +1524,7 @@ namespace MornLib {
                 if(meta != null) {
                     foreach(var b in meta.behaviours) {
                         if(b == null) continue;
-                        foreach(var (_,link) in EnumerateConnectionFields(b)) {
+                        foreach(var link in EnumerateStateLinks(b)) {
                             if(link != null && link.stateID != 0) _hoveredRelatedIDs.Add(link.stateID);
                         }
                     }
@@ -1192,10 +1535,19 @@ namespace MornLib {
             _edgesLayerFront?.MarkDirtyRepaint();
         }
         private void ApplyHoverEffects() {
+            HashSet<int> hoverSet = null;
+            if(_hoveredNodeID != 0) {
+                hoverSet = _hoveredRelatedIDs;
+            } else if(_hoveredEdgeIndex >= 0 && _hoveredEdgeIndex < _edgeRecords.Count) {
+                var rec = _edgeRecords[_hoveredEdgeIndex];
+                var src = rec.outputPort?.GetFirstAncestorOfType<Node>();
+                var srcID = src?.userData is int s ? s : 0;
+                var dstID = rec.targetNode?.userData is int d ? d : 0;
+                hoverSet = new HashSet<int> { srcID,dstID };
+            }
             foreach(var pair in _nodeByID) {
-                var n = pair.Value;
-                var related = _hoveredNodeID == 0 || _hoveredRelatedIDs.Contains(pair.Key);
-                n.style.opacity = related ? 1f : 0.35f;
+                var dim = pair.Value.Q("morn-dim-overlay");
+                if(dim != null) dim.style.backgroundColor = new Color(0f,0f,0f,0f);
             }
         }
         private void ShowNodeContextMenuGeneric(int stateID,Node node) {
@@ -1332,7 +1684,7 @@ namespace MornLib {
                 foreach(var b in n.behaviours) {
                     if(b == null) continue;
                     foreach(var f in b.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)) {
-                        if(f.GetValue(b) is Connection c && c.stateID == stateID) c.stateID = 0;
+                        if(f.GetValue(b) is StateLink c && c.stateID == stateID) c.stateID = 0;
                     }
                 }
             }
@@ -1405,27 +1757,27 @@ namespace MornLib {
                     .GetArrayElementAtIndex(nodeIndex)
                     .FindPropertyRelative("behaviours")
                     .GetArrayElementAtIndex(behaviourIndex);
-                MornStateBehaviourPropertyDrawer.BuildFields(section,bProp,skipConnections: true);
+                MornStateBehaviourPropertyDrawer.BuildFields(section,bProp,skipStateLinks: true);
                 MornStateBehaviourPropertyDrawer.BuildMethodAttributes(section,bProp);
                 section.Bind(so);
             }
-            foreach(var (fieldName,link) in EnumerateConnectionFields(state)) {
+            foreach(var (path,link) in EnumerateStateLinkFields(state)) {
                 var isBack = link.stateID != 0
                     && link.stateID != stateID
                     && _layoutPositions.TryGetValue(link.stateID,out var tp)
                     && _layoutPositions.TryGetValue(stateID,out var sp)
                     && tp.x < sp.x;
-                section.Add(CreateOutputPortRow(node,state,link,fieldName,isBack));
+                section.Add(CreateOutputPortRow(node,state,link,path,isBack));
             }
             if(parent != null) parent.Add(section);
             return section;
         }
-        private VisualElement CreateOutputPortRow(Node node,MornStateBehaviour state,Connection link,string fieldName,bool placeOnLeft) {
+        private VisualElement CreateOutputPortRow(Node node,MornStateBehaviour state,StateLink link,string fieldName,bool placeOnLeft) {
             var row = new VisualElement();
             row.style.flexDirection = FlexDirection.Row;
             row.style.alignItems = Align.Center;
             row.style.marginTop = 2;
-            var label = new Label(fieldName);
+            var label = new Label(string.IsNullOrEmpty(link.name) ? fieldName : link.name);
             label.style.flexGrow = 1;
             var port = node.InstantiatePort(Orientation.Horizontal,Direction.Output,Port.Capacity.Single,typeof(MornStateBehaviour));
             port.portName = "";
@@ -1472,8 +1824,21 @@ namespace MornLib {
             HandleDragMove(e.mousePosition);
         }
         private void OnEdgePointerMove(PointerMoveEvent e) {
-            if(_isDraggingEdge == false) return;
-            HandleDragMove(e.position);
+            if(_isDraggingEdge) {
+                HandleDragMove(e.position);
+                return;
+            }
+            UpdateEdgeHover(e.position);
+        }
+        private int _hoveredEdgeIndex = -1;
+        private void UpdateEdgeHover(Vector2 worldPos) {
+            if(_target == null || _edgesLayer == null) return;
+            var idx = HitTestEdgeAtMousePosition(worldPos);
+            if(idx == _hoveredEdgeIndex) return;
+            _hoveredEdgeIndex = idx;
+            ApplyHoverEffects();
+            _edgesLayer?.MarkDirtyRepaint();
+            _edgesLayerFront?.MarkDirtyRepaint();
         }
         private void HandleDragMove(Vector2 pos) {
             if(_draggingPort != null && _portRowInfo.TryGetValue(_draggingPort,out var info)) {
@@ -1512,7 +1877,7 @@ namespace MornLib {
         }
         public void ConnectFromOutputToNode(Port outputPort,Node targetNode) {
             if(outputPort == null || targetNode == null || _target == null) return;
-            if(outputPort.userData is not System.ValueTuple<MornStateBehaviour,Connection> tup) return;
+            if(outputPort.userData is not System.ValueTuple<MornStateBehaviour,StateLink> tup) return;
             if(targetNode.userData is not int targetID) return;
             var input = targetNode.inputContainer.Q<Port>();
             if(input == null) return;
@@ -1532,7 +1897,7 @@ namespace MornLib {
         }
         private void CreateNodeAndConnect(Port outputPort,Vector2 graphPos) {
             if(outputPort == null || _target == null) return;
-            if(outputPort.userData is not System.ValueTuple<MornStateBehaviour,Connection> tup) return;
+            if(outputPort.userData is not System.ValueTuple<MornStateBehaviour,StateLink> tup) return;
             var newID = AllocateUniqueStateID();
             Undo.RegisterCompleteObjectUndo(_target,"Create State and Connect");
             _target.RegisterNode(new MornStateMachine.StateNode { id = newID,name = "New State" });
@@ -1544,7 +1909,7 @@ namespace MornLib {
         }
         public void DisconnectOutput(Port outputPort) {
             if(outputPort == null || _target == null) return;
-            if(outputPort.userData is not System.ValueTuple<MornStateBehaviour,Connection> tup) return;
+            if(outputPort.userData is not System.ValueTuple<MornStateBehaviour,StateLink> tup) return;
             if(tup.Item2.stateID == 0) return;
             Undo.RegisterCompleteObjectUndo(_target,"Disconnect Edge");
             tup.Item2.stateID = 0;
@@ -1791,11 +2156,141 @@ namespace MornLib {
             }
             var screenMousePos = evt.mousePosition;
             var graphPos = contentViewContainer.WorldToLocal(screenMousePos);
+            var hitEdgeIndex = HitTestEdgeAtMousePosition(screenMousePos);
+            if(hitEdgeIndex >= 0) {
+                var capturedRecIndex = hitEdgeIndex;
+                evt.menu.AppendAction("Split (Insert State Here)",_ => SplitEdgeAt(capturedRecIndex,graphPos));
+                evt.menu.AppendAction("Delete Edge",_ => DeleteEdge(capturedRecIndex));
+                return;
+            }
             evt.menu.AppendAction("Create State",_ => CreateEmptyStateAt(graphPos));
             var clipboard = EditorGUIUtility.systemCopyBuffer;
             var canPaste = string.IsNullOrEmpty(clipboard) == false && clipboard.StartsWith("{");
             evt.menu.AppendAction("Paste State",_ => PasteAtGraphPos(clipboard,graphPos),
                 _ => canPaste ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+        }
+        private int HitTestEdgeAtMousePosition(Vector2 worldPos) {
+            if(_edgesLayer == null) return -1;
+            var edgesLocal = _edgesLayer.WorldToLocal(worldPos);
+            var backIdx = ComputeBackEdgeIndices();
+            for(var ri = 0;ri < _edgeRecords.Count;ri++) {
+                if(IsPointOnEdge(ri,edgesLocal,backIdx)) return ri;
+            }
+            return -1;
+        }
+        private bool IsPointOnEdge(int recIndex,Vector2 localPos,Dictionary<int,int> backEdgeIndex) {
+            const float hitDist = 8f;
+            var rec = _edgeRecords[recIndex];
+            if(rec.outputPort == null || rec.targetNode == null) return false;
+            var sourceNode = rec.outputPort.GetFirstAncestorOfType<Node>();
+            if(sourceNode == null || sourceNode == rec.targetNode) return false;
+            var sourceCenter = sourceNode.worldBound.center;
+            var portCenter = rec.outputPort.worldBound.center;
+            var sourcePortOnLeft = portCenter.x < sourceCenter.x;
+            var portEdgeWorld = ResolvePortAnchor(rec.outputPort,sourcePortOnLeft,portCenter.y);
+            var targetCenter = rec.targetNode.worldBound.center;
+            var toReceivesFromRight = targetCenter.x < sourceCenter.x;
+            var inWorld = toReceivesFromRight
+                ? new Vector2(rec.targetNode.worldBound.xMax,targetCenter.y)
+                : new Vector2(rec.targetNode.worldBound.x,targetCenter.y);
+            var isBackEdge = IsBackEdgeBetween(sourceCenter,targetCenter);
+            if(isBackEdge) inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMax - BackEdgeCornerInset);
+            else inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMin + BackEdgeCornerInset);
+            var fromLocal = _edgesLayer.WorldToLocal(portEdgeWorld);
+            var toLocal = _edgesLayer.WorldToLocal(inWorld);
+            var fromOutDirX = sourcePortOnLeft ? -1f : 1f;
+            var toInDirX = toReceivesFromRight ? 1f : -1f;
+            var stub = ForwardEdgeStub;
+            var hasObstacle = false;
+            var laneY = 0f;
+            if(isBackEdge && backEdgeIndex.TryGetValue(recIndex,out var idx)) {
+                var pathYMin = Mathf.Min(portEdgeWorld.y,inWorld.y);
+                var pathYMax = Mathf.Max(portEdgeWorld.y,inWorld.y);
+                var corridor = ComputeMaxBottomBetween(sourceNode,rec.targetNode,pathYMin,pathYMax);
+                hasObstacle = corridor.hasObstacle;
+                if(hasObstacle) {
+                    laneY = corridor.laneLocalY + BackEdgeBaseDepth + idx * BackEdgeStepDepth;
+                    stub = GetBackEdgeStub(idx);
+                } else {
+                    stub = BackEdgeStub;
+                }
+            }
+            var stub1 = new Vector2(fromLocal.x + fromOutDirX * stub,fromLocal.y);
+            var stub2 = new Vector2(toLocal.x + toInDirX * stub,toLocal.y);
+            if(SegmentDistance(localPos,fromLocal,stub1) < hitDist) return true;
+            if(SegmentDistance(localPos,stub2,toLocal) < hitDist) return true;
+            if(isBackEdge && hasObstacle) {
+                var corner1 = new Vector2(stub1.x,laneY);
+                var corner2 = new Vector2(stub2.x,laneY);
+                if(SegmentDistance(localPos,stub1,corner1) < hitDist) return true;
+                if(SegmentDistance(localPos,corner1,corner2) < hitDist) return true;
+                if(SegmentDistance(localPos,corner2,stub2) < hitDist) return true;
+            } else {
+                var dx = Mathf.Max(40f,Mathf.Abs(stub2.x - stub1.x) * 0.5f);
+                var c1 = new Vector2(stub1.x + fromOutDirX * dx,stub1.y);
+                var c2 = new Vector2(stub2.x + toInDirX * dx,stub2.y);
+                var prev = stub1;
+                for(var i = 1;i <= 16;i++) {
+                    var t = i / 16f;
+                    var u = 1 - t;
+                    var p = u*u*u*stub1 + 3*u*u*t*c1 + 3*u*t*t*c2 + t*t*t*stub2;
+                    if(SegmentDistance(localPos,prev,p) < hitDist) return true;
+                    prev = p;
+                }
+            }
+            return false;
+        }
+        private static float SegmentDistance(Vector2 p,Vector2 a,Vector2 b) {
+            var ab = b - a;
+            var len2 = ab.sqrMagnitude;
+            if(len2 < 0.0001f) return Vector2.Distance(p,a);
+            var t = Mathf.Clamp01(Vector2.Dot(p - a,ab) / len2);
+            return Vector2.Distance(p,a + t * ab);
+        }
+        private void DeleteEdge(int recIndex) {
+            if(_target == null) return;
+            if(recIndex < 0 || recIndex >= _edgeRecords.Count) return;
+            var rec = _edgeRecords[recIndex];
+            if(rec.link == null) return;
+            Undo.RegisterCompleteObjectUndo(_target,"Delete Edge");
+            rec.link.stateID = 0;
+            EditorUtility.SetDirty(_target);
+            EditorApplication.delayCall += () => LoadStateMachine(_target);
+        }
+        private void SplitEdgeAt(int recIndex,Vector2 graphPos) {
+            if(_target == null) return;
+            if(recIndex < 0 || recIndex >= _edgeRecords.Count) return;
+            var rec = _edgeRecords[recIndex];
+            if(rec.link == null) return;
+            var oldTargetID = rec.link.stateID;
+            if(oldTargetID == 0) return;
+            var transitionType = FindBehaviourType("MornLib.TransitionState");
+            if(transitionType == null) {
+                Debug.LogWarning("[MornState] TransitionState type not found.");
+                return;
+            }
+            Undo.RegisterCompleteObjectUndo(_target,"Split Edge");
+            var newID = AllocateUniqueStateID();
+            var newMeta = new MornStateMachine.StateNode { id = newID,name = "New State" };
+            var transition = (MornStateBehaviour)System.Activator.CreateInstance(transitionType);
+            transition.StateID = newID;
+            var nextField = transitionType.GetField("_nextState",BindingFlags.Instance | BindingFlags.NonPublic);
+            if(nextField != null) {
+                var conn = new StateLink { stateID = oldTargetID };
+                nextField.SetValue(transition,conn);
+            }
+            newMeta.behaviours.Add(transition);
+            _target.RegisterNode(newMeta);
+            rec.link.stateID = newID;
+            EditorUtility.SetDirty(_target);
+            LoadStateMachine(_target);
+        }
+        private static System.Type FindBehaviourType(string fullName) {
+            foreach(var asm in System.AppDomain.CurrentDomain.GetAssemblies()) {
+                var t = asm.GetType(fullName);
+                if(t != null) return t;
+            }
+            return null;
         }
         private List<Node> GetSelectedStateNodes() {
             var result = new List<Node>();
@@ -1826,7 +2321,7 @@ namespace MornLib {
                 foreach(var b in n.behaviours) {
                     if(b == null) continue;
                     foreach(var f in b.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)) {
-                        if(f.GetValue(b) is Connection c && ids.Contains(c.stateID)) c.stateID = 0;
+                        if(f.GetValue(b) is StateLink c && ids.Contains(c.stateID)) c.stateID = 0;
                     }
                 }
             }
@@ -1899,6 +2394,7 @@ namespace MornLib {
                 _nodeSig[stateID] = ComputeNodeSig(meta);
                 RebuildEdgeRecords(_target);
                 UpdateHighlights();
+                ReflowNodePositions(_target);
                 return;
             }
             LoadStateMachine(_target);
@@ -1949,14 +2445,20 @@ namespace MornLib {
             if(_target == null) return change;
             if(_isClearingForReload) return change;
             if(change.edgesToCreate != null) {
+                var anyCreated = false;
                 foreach(var edge in change.edgesToCreate) {
-                    if(edge.output.userData is System.ValueTuple<MornStateBehaviour,Connection> tup
+                    if(edge.output.userData is System.ValueTuple<MornStateBehaviour,StateLink> tup
                        && edge.input.node.userData is int targetID) {
                         Undo.RegisterCompleteObjectUndo(_target,"Connect Edge");
                         tup.Item2.stateID = targetID;
                         EditorUtility.SetDirty(_target);
                         edge.userData = tup;
+                        anyCreated = true;
                     }
+                }
+                if(anyCreated) {
+                    change.edgesToCreate.Clear();
+                    EditorApplication.delayCall += () => LoadStateMachine(_target);
                 }
             }
             if(change.elementsToRemove != null) {
@@ -1964,7 +2466,7 @@ namespace MornLib {
                 var anyEdge = false;
                 foreach(var elem in change.elementsToRemove) {
                     switch(elem) {
-                        case Edge e when e.output != null && e.output.userData is System.ValueTuple<MornStateBehaviour,Connection> tup:
+                        case Edge e when e.output != null && e.output.userData is System.ValueTuple<MornStateBehaviour,StateLink> tup:
                             tup.Item2.stateID = 0;
                             anyEdge = true;
                             break;
@@ -1992,13 +2494,10 @@ namespace MornLib {
         }
         private void ClearLinksTargeting(int stateID) {
             if(_target == null) return;
-            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
             foreach(var n in _target.Nodes) {
                 foreach(var b in n.behaviours) {
                     if(b == null) continue;
-                    foreach(var f in b.GetType().GetFields(flags)) {
-                        if(f.FieldType != typeof(Connection)) continue;
-                        if(f.GetValue(b) is not Connection link) continue;
+                    foreach(var link in EnumerateStateLinks(b)) {
                         if(link == null) continue;
                         if(link.stateID == stateID) link.stateID = 0;
                     }

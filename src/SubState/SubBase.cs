@@ -5,25 +5,32 @@ namespace MornLib {
     [Serializable]
     public abstract class SubBase : MornStateBehaviour {
         [SerializeField, HideInInspector] private List<ExitCodeLink> _exitCodeLinks = new();
-        private readonly Dictionary<string, Connection> _lookup = new();
+        private readonly Dictionary<string, StateLink> _lookup = new();
         private SubStateController _controller;
         private bool _autoDestroy;
         public IReadOnlyList<ExitCodeLink> ExitCodeLinks => _exitCodeLinks;
         public void SetExitCodes(IReadOnlyList<ExitCode> exitCodes) {
-            var preserved = new Dictionary<string, Connection>();
+            var pairs = new List<(ExitCode code, bool autoDestroy)>(exitCodes.Count);
+            foreach(var code in exitCodes) pairs.Add((code, true));
+            SetExitCodes(pairs);
+        }
+        public void SetExitCodes(IReadOnlyList<(ExitCode code, bool autoDestroy)> exitCodes) {
+            var preserved = new Dictionary<string, StateLink>();
             foreach(var link in _exitCodeLinks) {
                 var key = link.ExitCode.ToString();
                 if(!string.IsNullOrEmpty(key)) preserved[key] = link.Next;
             }
             _exitCodeLinks.Clear();
-            foreach(var code in exitCodes) {
-                preserved.TryGetValue(code.ToString(), out var next);
+            foreach(var pair in exitCodes) {
+                preserved.TryGetValue(pair.code.ToString(), out var next);
+                next ??= new StateLink();
+                next.name = pair.autoDestroy ? pair.code.ToString() : $"{pair.code}(Keep)";
                 _exitCodeLinks.Add(new ExitCodeLink {
-                    ExitCode = code,
-                    Next = next ?? new Connection(),
+                    ExitCode = pair.code,
+                    Next = next,
                 });
             }
-            RebuildConnectionCache();
+            RebuildStateLinkCache();
         }
         public sealed override void OnStateBegin() {
             _autoDestroy = false;
@@ -75,11 +82,11 @@ namespace MornLib {
         public void Reload() {
             var src = GetExitSourceMachine();
             if(!(src is MornStateMachine fsm)) return;
-            var list = new List<ExitCode>();
+            var list = new List<(ExitCode code, bool autoDestroy)>();
             foreach(var node in fsm.NodesMutable) {
                 if(node.behaviours == null) continue;
                 foreach(var b in node.behaviours) {
-                    if(b is SubStateExitState exit) list.Add(exit.ExitCode);
+                    if(b is SubStateExitState exit) list.Add((exit.ExitCode, exit.AutoDestroy));
                 }
             }
             SetExitCodes(list);

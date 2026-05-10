@@ -9,7 +9,7 @@ namespace MornLib
     [MornStateMenu("Process")]
     internal class ProcessEnd : MornStateBehaviour
     {
-        [SerializeField] private Connection _nextState;
+        [SerializeField] private StateLink _nextState;
         private readonly List<ProcessBase> _processList = new();
 
         public override void OnStateBegin()

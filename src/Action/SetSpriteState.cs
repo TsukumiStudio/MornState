@@ -10,7 +10,7 @@ namespace MornLib
     {
         [SerializeField] private SpriteRenderer _renderer;
         [SerializeField] private Sprite[] _sprites;
-        [SerializeField] private Connection _nextState;
+        [SerializeField] private StateLink _nextState;
         
         public override void OnStateBegin()
         {

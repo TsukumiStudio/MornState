@@ -8,7 +8,7 @@ namespace MornLib
     internal class WaitTimeState : MornStateBehaviour
     {
         [SerializeField] private float _waitDuration;
-        [SerializeField] private Connection _next;
+        [SerializeField] private StateLink _next;
         private float _elapsedFrame;
 
         public override void OnStateBegin()

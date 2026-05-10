@@ -7,7 +7,7 @@ namespace MornLib
     [MornStateMenu("Action")]
     internal class TransitionState : MornStateBehaviour
     {
-        [SerializeField] private Connection _nextState;
+        [SerializeField] private StateLink _nextState;
 
         public override void OnStateBegin()
         {

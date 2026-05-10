@@ -9,7 +9,7 @@ namespace MornLib
     internal class WaitInputState : MornStateBehaviour
     {
         [SerializeField] private InputActionReference _inputAction;
-        [SerializeField] private Connection _next;
+        [SerializeField] private StateLink _next;
 
         public override void OnStateUpdate()
         {

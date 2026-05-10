@@ -9,7 +9,7 @@ namespace MornLib
     internal class WaitRandomTimeCurveState : MornStateBehaviour
     {
         [SerializeField] private AnimationCurve _curve;
-        [SerializeField] private Connection _next;
+        [SerializeField] private StateLink _next;
         private float _transitionTime;
 
         public override void OnStateBegin()

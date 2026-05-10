@@ -10,7 +10,7 @@ namespace MornLib
     {
         [SerializeField] private float _min;
         [SerializeField] private float _max;
-        [SerializeField] private Connection _next;
+        [SerializeField] private StateLink _next;
         private float _transitionTime;
 
         public override void OnStateBegin()

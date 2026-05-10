@@ -2,7 +2,7 @@ using System;
 using UnityEngine;
 namespace MornLib {
     [Serializable]
-    public class Connection {
+    public class StateLink {
         [SerializeField] private int _stateID;
         [SerializeField] private string _name;
         public int stateID {

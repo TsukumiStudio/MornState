@@ -4,8 +4,8 @@ namespace MornLib {
     [Serializable]
     public sealed class ExitCodeLink {
         [SerializeField] private ExitCode _exitCode;
-        [SerializeField] private Connection _next;
+        [SerializeField] private StateLink _next;
         public ExitCode ExitCode { get => _exitCode; set => _exitCode = value; }
-        public Connection Next { get => _next; set => _next = value; }
+        public StateLink Next { get => _next; set => _next = value; }
     }
 }

@@ -10,7 +10,7 @@ namespace MornLib
     {
         [SerializeField] private int _minFrame;
         [SerializeField] private int _maxFrame;
-        [SerializeField] private Connection _next;
+        [SerializeField] private StateLink _next;
         private int _elapsedFrame;
         private int _waitFrame;
 

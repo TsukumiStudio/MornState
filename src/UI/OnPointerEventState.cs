@@ -16,11 +16,11 @@ namespace MornLib
     internal sealed class OnPointerEventState : MornStateBehaviour
     {
         [SerializeField] private UIBehaviour _target;
-        [SerializeField] private Connection _onPointerEnter;
-        [SerializeField] private Connection _onPointerExit;
-        [SerializeField] private Connection _onPointerDown;
-        [SerializeField] private Connection _onPointerUp;
-        [SerializeField] private Connection _onPointerClick;
+        [SerializeField] private StateLink _onPointerEnter;
+        [SerializeField] private StateLink _onPointerExit;
+        [SerializeField] private StateLink _onPointerDown;
+        [SerializeField] private StateLink _onPointerUp;
+        [SerializeField] private StateLink _onPointerClick;
 
         public override void OnStateBegin()
         {

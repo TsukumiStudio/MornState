@@ -10,7 +10,7 @@ namespace MornLib
     internal class PlayVideoProcess : ProcessBase
     {
         [SerializeField] private VideoPlayer _videoPlayer;
-        [SerializeField] private Connection _nextStateLink;
+        [SerializeField] private StateLink _nextStateLink;
         public override float Progress => _videoPlayer ? Mathf.Clamp01(_videoPlayer.frame / (float)_videoPlayer.frameCount) : 1f;
 
         public override void OnStateBegin()

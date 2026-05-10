@@ -52,18 +52,18 @@ namespace MornLib
                 if(f.IsDefined(typeof(NonSerializedAttribute),true)) continue;
                 if(f.IsPrivate && f.IsDefined(typeof(SerializeField),true) == false) continue;
                 var v = f.GetValue(b);
-                if(v is Connection c)
+                if(v is StateLink c)
                 {
                     var targetName = c.IsConnected ? ResolveName(fsm,c.stateID) : "(none)";
                     sb.AppendLine($"      {f.Name} -> {targetName}");
                     continue;
                 }
-                if(v is IList list && list.Count > 0 && list[0] is Connection)
+                if(v is IList list && list.Count > 0 && list[0] is StateLink)
                 {
                     sb.Append($"      {f.Name} -> [");
                     for(var i = 0;i < list.Count;i++)
                     {
-                        var lc = (Connection)list[i];
+                        var lc = (StateLink)list[i];
                         sb.Append(lc.IsConnected ? ResolveName(fsm,lc.stateID) : "(none)");
                         if(i < list.Count - 1) sb.Append(", ");
                     }

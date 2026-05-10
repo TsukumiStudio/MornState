@@ -10,33 +10,44 @@ namespace MornLib
         public override VisualElement CreatePropertyGUI(SerializedProperty property)
         {
             var root = new VisualElement();
-            BuildFields(root,property,skipConnections: false);
+            BuildFields(root,property,skipStateLinks: false);
             BuildMethodAttributes(root,property);
             return root;
         }
 
-        public static void BuildFields(VisualElement parent,SerializedProperty behaviourProperty,bool skipConnections)
+        public static void BuildFields(VisualElement parent,SerializedProperty behaviourProperty,bool skipStateLinks)
         {
             var captured = behaviourProperty.Copy();
-            parent.Add(new IMGUIContainer(() => DrawFieldsImgui(captured,skipConnections)));
+            parent.Add(new IMGUIContainer(() => DrawFieldsImgui(captured,skipStateLinks)));
         }
 
-        private static void DrawFieldsImgui(SerializedProperty behaviourProperty,bool skipConnections)
+        private static void DrawFieldsImgui(SerializedProperty behaviourProperty,bool skipStateLinks)
         {
             var so = behaviourProperty.serializedObject;
-            so.Update();
-            var iter = behaviourProperty.Copy();
-            var end = iter.GetEndProperty();
-            if(iter.NextVisible(true))
+            if(so == null || so.targetObject == null)
             {
-                do
-                {
-                    if(SerializedProperty.EqualContents(iter,end)) break;
-                    if(skipConnections && IsConnection(iter)) continue;
-                    EditorGUILayout.PropertyField(iter,true);
-                } while(iter.NextVisible(false));
+                EditorApplication.delayCall += () => Selection.activeObject = null;
+                return;
             }
-            so.ApplyModifiedProperties();
+            try
+            {
+                so.Update();
+                var iter = behaviourProperty.Copy();
+                var end = iter.GetEndProperty();
+                if(iter.NextVisible(true))
+                {
+                    do
+                    {
+                        if(SerializedProperty.EqualContents(iter,end)) break;
+                        if(skipStateLinks && IsStateLink(iter)) continue;
+                        EditorGUILayout.PropertyField(iter,true);
+                    } while(iter.NextVisible(false));
+                }
+                so.ApplyModifiedProperties();
+            }
+            catch(System.ObjectDisposedException) { }
+            catch(System.InvalidOperationException) { }
+            catch(System.NullReferenceException) { }
         }
 
         public static void BuildMethodAttributes(VisualElement parent,SerializedProperty behaviourProperty)
@@ -60,10 +71,10 @@ namespace MornLib
             return false;
         }
 
-        private static bool IsConnection(SerializedProperty prop)
+        private static bool IsStateLink(SerializedProperty prop)
         {
             return prop.propertyType == SerializedPropertyType.Generic
-                   && prop.type == nameof(Connection);
+                   && prop.type == nameof(StateLink);
         }
 
         private static object ResolveTarget(SerializedProperty property)

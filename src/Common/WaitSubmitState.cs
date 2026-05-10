@@ -12,7 +12,7 @@ namespace MornLib
 	internal sealed class WaitSubmitState : MornStateBehaviour
 	{
 		[SerializeField] private Selectable _target;
-		[SerializeField] private Connection _nextState;
+		[SerializeField] private StateLink _nextState;
 
 		public override void OnStateBegin()
 		{

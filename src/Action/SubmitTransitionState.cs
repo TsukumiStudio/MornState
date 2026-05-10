@@ -12,7 +12,7 @@ namespace MornLib
     internal class SubmitTransitionState : MornStateBehaviour
     {
         [SerializeField] private Selectable _target;
-        [SerializeField] private Connection _onSubmit;
+        [SerializeField] private StateLink _onSubmit;
 
         public override void OnStateBegin()
         {

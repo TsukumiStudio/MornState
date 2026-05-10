@@ -11,7 +11,7 @@ namespace MornLib
         [SerializeField] private float _duration;
         [SerializeField] private Vector3 _endValue;
         [SerializeField] private MornEaseType _easeType;
-        [SerializeField] private Connection _nextState;
+        [SerializeField] private StateLink _nextState;
         private float _startTime;
         private Vector3 _startValue;
         public override float Progress => Mathf.Clamp01((Time.time - _startTime) / _duration);

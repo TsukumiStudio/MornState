@@ -48,7 +48,7 @@ namespace MornLib
             if(fsm == null) return;
             Undo.RegisterCompleteObjectUndo(fsm,$"Remove State: id={stateID}");
             fsm.UnregisterNode(stateID);
-            // 残った Connection.stateID が消えた id を指していたら 0 にクリア
+            // 残った StateLink.stateID が消えた id を指していたら 0 にクリア
             foreach(var n in fsm.NodesMutable)
             {
                 foreach(var b in n.behaviours)
@@ -56,7 +56,7 @@ namespace MornLib
                     if(b == null) continue;
                     foreach(var f in b.GetType().GetFields(FieldFlags))
                     {
-                        if(f.GetValue(b) is Connection c && c.stateID == stateID) c.stateID = 0;
+                        if(f.GetValue(b) is StateLink c && c.stateID == stateID) c.stateID = 0;
                     }
                 }
             }
@@ -97,9 +97,9 @@ namespace MornLib
             MarkDirty(fsm);
         }
 
-        // ---- Connection ops ----
+        // ---- StateLink ops ----
 
-        /// <summary>fromState の指定 behaviour の指定 Connection field を toState に接続する。fieldName は Connection 型 field の名前。</summary>
+        /// <summary>fromState の指定 behaviour の指定 StateLink field を toState に接続する。fieldName は StateLink 型 field の名前。</summary>
         public static void Connect(MornStateMachine fsm,int fromStateID,int behaviourIndex,string fieldName,int toStateID)
         {
             var node = fsm?.FindNode(fromStateID);
@@ -109,10 +109,10 @@ namespace MornLib
             var b = node.behaviours[behaviourIndex];
             if(b == null) throw new ArgumentException("behaviour is null");
             var field = b.GetType().GetField(fieldName,FieldFlags);
-            if(field == null || field.FieldType != typeof(Connection)) throw new ArgumentException($"Field '{fieldName}' is not a Connection on {b.GetType().Name}");
+            if(field == null || field.FieldType != typeof(StateLink)) throw new ArgumentException($"Field '{fieldName}' is not a StateLink on {b.GetType().Name}");
             Undo.RegisterCompleteObjectUndo(fsm,"Connect");
-            var c = (Connection)field.GetValue(b);
-            if(c == null) { c = new Connection(); field.SetValue(b,c); }
+            var c = (StateLink)field.GetValue(b);
+            if(c == null) { c = new StateLink(); field.SetValue(b,c); }
             c.stateID = toStateID;
             MarkDirty(fsm);
         }

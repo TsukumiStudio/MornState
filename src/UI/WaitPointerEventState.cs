@@ -13,7 +13,7 @@ namespace MornLib
     {
         [SerializeField] private UIBehaviour _target;
         [SerializeField] private PointerEventType _pointerEventType;
-        [SerializeField] private Connection _nextState;
+        [SerializeField] private StateLink _nextState;
 
         public override void OnStateBegin()
         {

@@ -8,7 +8,7 @@ namespace MornLib
     internal class WaitFrameProgress : ProcessBase
     {
         [SerializeField] private int _frame;
-        [SerializeField] private Connection _next;
+        [SerializeField] private StateLink _next;
         private int _elapsedFrame;
         public override float Progress => _frame > 0 ? Mathf.Clamp01((float)_elapsedFrame / _frame) : 1;
 

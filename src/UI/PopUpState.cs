@@ -17,7 +17,7 @@ namespace MornLib
         [SerializeField] private CanvasGroup _origin;
         [SerializeField] private Selectable _target;
         [SerializeField] private GameObject _prefab;
-        [SerializeField] private Connection _onClosed;
+        [SerializeField] private StateLink _onClosed;
         [Inject] private IObjectResolver _container;
         private GameObject _instance;
         private bool _waitClose;

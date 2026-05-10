@@ -10,7 +10,7 @@ namespace MornLib
     {
         [SerializeField] private Animator _animator;
         [SerializeField] private int _layer;
-        [SerializeField] private Connection _onComplete;
+        [SerializeField] private StateLink _onComplete;
 
         public override void OnStateUpdate()
         {
