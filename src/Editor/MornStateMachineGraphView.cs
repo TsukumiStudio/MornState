@@ -80,7 +80,7 @@ namespace MornLib {
                 }
             });
             toolbar.Add(_targetField);
-            var refreshBtn = new ToolbarButton(Reload) { text = "Refresh" };
+            var refreshBtn = new ToolbarButton(ForceRefresh) { text = "Refresh" };
             toolbar.Add(refreshBtn);
             var focusBtn = new ToolbarButton(() => _view?.FrameAllNodes()) { text = "Focus" };
             toolbar.Add(focusBtn);
@@ -100,6 +100,11 @@ namespace MornLib {
                 if(_view != null) _view.ForceFullReload();
                 Reload();
             };
+        }
+        private void ForceRefresh() {
+            _view?.ForceFullReload();
+            Reload();
+            _view?.FrameAllNodes();
         }
         private void Reload() {
             if(_view == null) return;
@@ -481,14 +486,18 @@ namespace MornLib {
             _isClearingForReload = false;
             if(pendingLayoutCount[0] <= 0) _edgeLayoutPending = false;
             schedule.Execute(SettleColumnHeights).StartingIn(0);
+            if(targetChanged || animate == false) {
+                schedule.Execute(FrameAllNodesNow).StartingIn(150);
+            }
         }
         private void SettleColumnHeights() {
             if(_nodeByID.Count == 0) return;
             const float spacing = 30f;
             var columns = new SortedDictionary<float,List<(int id,Node node,float y,float h)>>();
+            var anyPendingLayout = false;
             foreach(var pair in _nodeByID) {
                 var node = pair.Value;
-                if(node.layout.width <= 0 || float.IsNaN(node.layout.height)) return;
+                if(node.layout.width <= 0 || float.IsNaN(node.layout.height)) { anyPendingLayout = true; continue; }
                 if(_layoutPositions.TryGetValue(pair.Key,out var pos) == false) continue;
                 var key = Mathf.Round(pos.x);
                 if(columns.TryGetValue(key,out var list) == false) {
@@ -514,6 +523,9 @@ namespace MornLib {
                     }
                     y += entry.h + spacing;
                 }
+            }
+            if(anyPendingLayout) {
+                schedule.Execute(SettleColumnHeights).StartingIn(50);
             }
             if(changed) {
                 _edgesLayer?.MarkDirtyRepaint();
