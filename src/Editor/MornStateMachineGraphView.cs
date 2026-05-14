@@ -662,6 +662,10 @@ namespace MornLib {
         private (float laneLocalY,bool hasObstacle) ComputeMaxBottomBetween(Node sourceNode,Node targetNode,float pathYMinWorld,float pathYMaxWorld) {
             var minX = Mathf.Min(sourceNode.worldBound.xMax,targetNode.worldBound.xMax);
             var maxX = Mathf.Max(sourceNode.worldBound.xMax,targetNode.worldBound.xMax);
+            var sourceCenterX = sourceNode.worldBound.center.x;
+            var targetCenterX = targetNode.worldBound.center.x;
+            var colDistance = Mathf.Abs(sourceCenterX - targetCenterX);
+            var sameColThreshold = colDistance * 0.25f;
             var maxBottomWorld = float.NegativeInfinity;
             var hasObstacle = false;
             foreach(var pair in _nodeByID) {
@@ -669,6 +673,9 @@ namespace MornLib {
                 if(n == sourceNode || n == targetNode) continue;
                 var cx = n.worldBound.center.x;
                 if(cx <= minX || cx >= maxX) continue;
+                // ソース・ターゲットと同じ列にあるノードは障害物扱いしない
+                if(Mathf.Abs(cx - sourceCenterX) < sameColThreshold) continue;
+                if(Mathf.Abs(cx - targetCenterX) < sameColThreshold) continue;
                 if(n.worldBound.yMax < pathYMinWorld || n.worldBound.yMin > pathYMaxWorld) continue;
                 hasObstacle = true;
                 if(n.worldBound.yMax > maxBottomWorld) maxBottomWorld = n.worldBound.yMax;
