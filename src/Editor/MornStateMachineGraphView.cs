@@ -20,6 +20,7 @@ namespace MornLib {
             win.Reload();
         }
         private const string PinnedGlobalIdKey = "MornState.Graph.PinnedGlobalId";
+        private const string SidebarVisibleKey = "MornState.Graph.SidebarVisible";
         private MornStateMachine _pinned;
         private MornStateMachineGraphView _view;
         private Label _hint;
@@ -27,7 +28,10 @@ namespace MornLib {
         private VisualElement _sidebar;
         private ScrollView _sidebarScroll;
         private MornStateMachine _sidebarRoot;
+        private ToolbarToggle _sidebarToggle;
+        private bool _sidebarVisible;
         private void OnEnable() {
+            _sidebarVisible = SessionState.GetBool(SidebarVisibleKey,true);
             var content = new VisualElement();
             content.style.flexDirection = FlexDirection.Row;
             content.style.flexGrow = 1;
@@ -84,7 +88,11 @@ namespace MornLib {
             toolbar.Add(refreshBtn);
             var focusBtn = new ToolbarButton(() => _view?.FrameAllNodes()) { text = "Focus" };
             toolbar.Add(focusBtn);
+            _sidebarToggle = new ToolbarToggle { text = "Hierarchy", value = _sidebarVisible };
+            _sidebarToggle.RegisterValueChangedCallback(e => SetSidebarVisible(e.newValue));
+            toolbar.Add(_sidebarToggle);
             rootVisualElement.Insert(0,toolbar);
+            SetSidebarVisible(_sidebarVisible);
             Selection.selectionChanged += Reload;
             Undo.undoRedoPerformed += Reload;
             EditorApplication.playModeStateChanged += OnPlayModeChanged;
@@ -131,6 +139,12 @@ namespace MornLib {
             if(_hint != null) _hint.style.display = fsm == null ? DisplayStyle.Flex : DisplayStyle.None;
             if(_targetField != null && _targetField.value != fsm) _targetField.SetValueWithoutNotify(fsm);
             RefreshSidebar(fsm);
+        }
+        private void SetSidebarVisible(bool visible) {
+            _sidebarVisible = visible;
+            SessionState.SetBool(SidebarVisibleKey,visible);
+            if(_sidebar != null) _sidebar.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+            if(_sidebarToggle != null && _sidebarToggle.value != visible) _sidebarToggle.SetValueWithoutNotify(visible);
         }
         private void RefreshSidebar(MornStateMachine current) {
             if(_sidebarScroll == null) return;
@@ -358,9 +372,7 @@ namespace MornLib {
                 var cur = GetAbsolutePosition(n);
                 if(Vector2.Distance(cur,pos) <= 0.5f) continue;
                 n.SetPosition(new Rect(pos.x,pos.y,0,0));
-                var off = cur - pos;
-                n.style.translate = new StyleTranslate(new Translate(off.x,off.y,0));
-                _animations[n] = new AnimState { start = cur,end = pos,elapsed = 0f,duration = 0.25f };
+                n.style.translate = StyleKeyword.None;
             }
             _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
         }
@@ -401,6 +413,7 @@ namespace MornLib {
             if(IsStructurallySame(fsm)) {
                 _target = fsm;
                 fsm.ReinjectOwners();
+                EnsureStateLinks(fsm);
                 var positionsFast = ComputeAutoLayout(fsm);
                 _layoutPositions.Clear();
                 foreach(var kv in positionsFast) _layoutPositions[kv.Key] = kv.Value;
@@ -410,9 +423,7 @@ namespace MornLib {
                     var cur = GetAbsolutePosition(node);
                     if(Vector2.Distance(cur,pos) > 0.5f) {
                         node.SetPosition(new Rect(pos.x,pos.y,0,0));
-                        var off = cur - pos;
-                        node.style.translate = new StyleTranslate(new Translate(off.x,off.y,0));
-                        _animations[node] = new AnimState { start = cur,end = pos,elapsed = 0f,duration = 0.25f };
+                        node.style.translate = StyleKeyword.None;
                     }
                 }
                 RebuildEdgeRecords(fsm);
@@ -443,10 +454,11 @@ namespace MornLib {
                 return;
             }
             fsm.ReinjectOwners();
+            EnsureStateLinks(fsm);
             var positions = ComputeAutoLayout(fsm);
             _layoutPositions.Clear();
             foreach(var kv in positions) _layoutPositions[kv.Key] = kv.Value;
-            var animate = _hasLoadedOnce && targetChanged == false;
+            var animate = false;
             var pendingLayoutCount = new[] { fsm.Nodes.Count };
             foreach(var meta in fsm.Nodes) {
                 var pos = positions.TryGetValue(meta.id,out var p) ? p : new Vector2(40,40);
@@ -496,7 +508,7 @@ namespace MornLib {
             _isClearingForReload = false;
             if(pendingLayoutCount[0] <= 0) _edgeLayoutPending = false;
             schedule.Execute(SettleColumnHeights).StartingIn(0);
-            if(targetChanged || animate == false) {
+            if(targetChanged) {
                 schedule.Execute(FrameAllNodesNow).StartingIn(150);
             }
         }
@@ -551,6 +563,7 @@ namespace MornLib {
             p.lineWidth = 2.5f;
             p.strokeColor = new Color(0.85f,0.85f,0.85f,0.65f);
             var backEdgeIndex = ComputeBackEdgeIndices();
+            var forwardEdgeIndex = ComputeForwardObstacleEdgeIndices();
             for(var ri = 0;ri < _edgeRecords.Count;ri++) {
                 var rec = _edgeRecords[ri];
                 if(rec.outputPort == null || rec.targetNode == null) continue;
@@ -606,6 +619,8 @@ namespace MornLib {
                     } else {
                         DrawForwardEdgeStubCurve(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,BackEdgeStub);
                     }
+                } else if(TryGetForwardObstacleLane(ri,sourceNode,rec.targetNode,portEdgeWorld,inWorld,forwardEdgeIndex,out var forwardLaneY,out var forwardStub)) {
+                    DrawBackEdgeL(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,forwardLaneY,forwardStub);
                 } else {
                     DrawForwardEdgeStubCurve(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,ForwardEdgeStub);
                 }
@@ -643,6 +658,7 @@ namespace MornLib {
             p.lineWidth = 2.5f;
             p.strokeColor = new Color(0.85f,0.85f,0.85f,0.65f);
             var backEdgeIndex = ComputeBackEdgeIndices();
+            var forwardEdgeIndex = ComputeForwardObstacleEdgeIndices();
             for(var ri = 0;ri < _edgeRecords.Count;ri++) {
                 var rec = _edgeRecords[ri];
                 if(rec.outputPort == null || rec.targetNode == null) continue;
@@ -679,6 +695,8 @@ namespace MornLib {
                         ? GetBackEdgeStub(idx)
                         : BackEdgeStub;
                     DrawBackEdgeStubsFront(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,stub);
+                } else if(TryGetForwardObstacleLane(ri,sourceNode,rec.targetNode,portEdgeWorld,inWorld,forwardEdgeIndex,out _,out var forwardStub)) {
+                    DrawBackEdgeStubsFront(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,forwardStub);
                 } else {
                     DrawForwardEdgeStubsFront(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,ForwardEdgeStub);
                 }
@@ -739,6 +757,44 @@ namespace MornLib {
             lanes.Sort((a,b) => a.corridorWidth.CompareTo(b.corridorWidth));
             for(var i = 0;i < lanes.Count;i++) result[lanes[i].recIndex] = i;
             return result;
+        }
+        private Dictionary<int,int> ComputeForwardObstacleEdgeIndices() {
+            var result = new Dictionary<int,int>();
+            var lanes = new List<(int recIndex,float minX,float maxX,float corridorWidth)>();
+            for(var ri = 0;ri < _edgeRecords.Count;ri++) {
+                var rec = _edgeRecords[ri];
+                if(rec.outputPort == null || rec.targetNode == null) continue;
+                var sourceNode = rec.outputPort.GetFirstAncestorOfType<Node>();
+                if(sourceNode == null || sourceNode == rec.targetNode) continue;
+                if(IsBackEdgeBetween(sourceNode.worldBound.center,rec.targetNode.worldBound.center)) continue;
+                var minX = Mathf.Min(sourceNode.worldBound.xMax,rec.targetNode.worldBound.x);
+                var maxX = Mathf.Max(sourceNode.worldBound.xMax,rec.targetNode.worldBound.x);
+                lanes.Add((ri,minX,maxX,maxX - minX));
+            }
+            lanes.Sort((a,b) => a.corridorWidth.CompareTo(b.corridorWidth));
+            for(var i = 0;i < lanes.Count;i++) result[lanes[i].recIndex] = i;
+            return result;
+        }
+        private bool TryGetForwardObstacleLane(
+            int recIndex,
+            Node sourceNode,
+            Node targetNode,
+            Vector2 portEdgeWorld,
+            Vector2 inWorld,
+            Dictionary<int,int> forwardEdgeIndex,
+            out float laneY,
+            out float stub) {
+            laneY = 0f;
+            stub = ForwardEdgeStub;
+            if(IsBackEdgeBetween(sourceNode.worldBound.center,targetNode.worldBound.center)) return false;
+            var pathYMin = Mathf.Min(portEdgeWorld.y,inWorld.y);
+            var pathYMax = Mathf.Max(portEdgeWorld.y,inWorld.y);
+            var corridor = ComputeMaxBottomBetween(sourceNode,targetNode,pathYMin,pathYMax);
+            if(corridor.hasObstacle == false) return false;
+            var laneIdx = forwardEdgeIndex.TryGetValue(recIndex,out var idx) ? idx : 0;
+            laneY = corridor.laneLocalY + BackEdgeBaseDepth + laneIdx * BackEdgeStepDepth;
+            stub = GetBackEdgeStub(laneIdx);
+            return true;
         }
         private void DrawBackEdgeL(UnityEngine.UIElements.Painter2D p,Vector2 fromLocal,Vector2 toLocal,bool fromOnLeft,bool toReceivesFromRight,float laneY,float stub) {
             var fromOutDirX = fromOnLeft ? -1f : 1f;
@@ -868,6 +924,7 @@ namespace MornLib {
             _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
         }
         private double _lastStructuralCheckTime;
+        private bool _graphRefreshQueued;
         private void OnEditorUpdate() {
             TickAnimations();
             var snapshot = Application.isPlaying && _target != null ? _target.CurrentStateID : 0;
@@ -888,6 +945,7 @@ namespace MornLib {
             if(now - _lastStructuralCheckTime < 0.25) return;
             _lastStructuralCheckTime = now;
             if(_isDraggingEdge || _isDraggingBehaviour) return;
+            EnsureStateLinks(_target);
             foreach(var meta in _target.Nodes) {
                 if(_nodeByID.ContainsKey(meta.id) == false) { LoadStateMachine(_target); return; }
                 var sig = ComputeNodeSig(meta);
@@ -898,7 +956,22 @@ namespace MornLib {
             }
             if(_target.Nodes.Count != _nodeByID.Count) LoadStateMachine(_target);
         }
-        private Vector2 ComputeEdgeBadgeLocal(EdgeRecord rec,Node sourceNode,int recIndex,Dictionary<int,int> backIdx) {
+        private void RequestGraphStructureRefresh() {
+            if(_target == null || _graphRefreshQueued) return;
+            _graphRefreshQueued = true;
+            EditorApplication.delayCall += () => {
+                _graphRefreshQueued = false;
+                if(_target == null) return;
+                EnsureStateLinks(_target);
+                LoadStateMachine(_target);
+            };
+        }
+        private Vector2 ComputeEdgeBadgeLocal(
+            EdgeRecord rec,
+            Node sourceNode,
+            int recIndex,
+            Dictionary<int,int> backIdx,
+            Dictionary<int,int> forwardIdx) {
             var sourceCenter = sourceNode.worldBound.center;
             var portCenter = rec.outputPort.worldBound.center;
             var sourcePortOnLeft = portCenter.x < sourceCenter.x;
@@ -932,12 +1005,16 @@ namespace MornLib {
                 } else {
                     stubLen = BackEdgeStub;
                 }
+            } else if(TryGetForwardObstacleLane(recIndex,sourceNode,rec.targetNode,portEdgeWorld,inWorld,forwardIdx,out var forwardLaneY,out var forwardStub)) {
+                corridorObstacle = true;
+                laneY = forwardLaneY;
+                stubLen = forwardStub;
             }
             var fromLocal = _edgesLayerFront.WorldToLocal(portEdgeWorld);
             var toLocal = _edgesLayerFront.WorldToLocal(inWorld);
             var stub1 = new Vector2(fromLocal.x + fromOutDirX * stubLen,fromLocal.y);
             var stub2 = new Vector2(toLocal.x + toInDirX * stubLen,toLocal.y);
-            if(isBackEdge && corridorObstacle) {
+            if(corridorObstacle) {
                 return new Vector2((stub1.x + stub2.x) * 0.5f,laneY);
             }
             return (stub1 + stub2) * 0.5f;
@@ -960,6 +1037,7 @@ namespace MornLib {
             }
             var seen = new HashSet<(int,int)>();
             var backIdx = ComputeBackEdgeIndices();
+            var forwardIdx = ComputeForwardObstacleEdgeIndices();
             for(var ri = 0;ri < _edgeRecords.Count;ri++) {
                 var rec = _edgeRecords[ri];
                 if(rec.outputPort == null || rec.targetNode == null) continue;
@@ -990,7 +1068,7 @@ namespace MornLib {
                 }
                 label.text = c.ToString();
                 label.style.display = DisplayStyle.Flex;
-                var midLocal = ComputeEdgeBadgeLocal(rec,sourceNode,ri,backIdx);
+                var midLocal = ComputeEdgeBadgeLocal(rec,sourceNode,ri,backIdx,forwardIdx);
                 label.style.left = midLocal.x - 12;
                 label.style.top = midLocal.y - 9;
             }
@@ -1125,6 +1203,60 @@ namespace MornLib {
             if(state == null) yield break;
             var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
             foreach(var l in ScanLinks(state,visited,0)) yield return l;
+        }
+        private static bool EnsureStateLinks(MornStateBehaviour state) {
+            if(state == null) return false;
+            var visited = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            return EnsureStateLinksInObject(state,visited,0);
+        }
+        private static bool EnsureStateLinksInObject(object obj,HashSet<object> visited,int depth) {
+            if(obj == null || depth > MaxStateLinkScanDepth || visited.Add(obj) == false) return false;
+            var changed = false;
+            if(obj is System.Collections.IList list && obj is not string) {
+                var elementType = GetListElementType(obj.GetType());
+                for(var i = 0;i < list.Count;i++) {
+                    var item = list[i];
+                    if(item == null && elementType == typeof(StateLink)) {
+                        list[i] = new StateLink();
+                        changed = true;
+                        item = list[i];
+                    }
+                    if(item == null) continue;
+                    if(item is StateLink) continue;
+                    changed |= EnsureStateLinksInObject(item,visited,depth + 1);
+                }
+                return changed;
+            }
+            var entries = GetFieldEntries(obj.GetType());
+            for(var i = 0;i < entries.Length;i++) {
+                var entry = entries[i];
+                var value = entry.Field.GetValue(obj);
+                if(entry.Kind == FieldKind.StateLink) {
+                    if(value != null) continue;
+                    entry.Field.SetValue(obj,new StateLink());
+                    changed = true;
+                    continue;
+                }
+                if(value == null) continue;
+                changed |= EnsureStateLinksInObject(value,visited,depth + 1);
+            }
+            return changed;
+        }
+        private static System.Type GetListElementType(System.Type type) {
+            if(type.IsArray) return type.GetElementType();
+            if(type.IsGenericType) return type.GetGenericArguments()[0];
+            return null;
+        }
+        private static void EnsureStateLinks(MornStateMachine fsm) {
+            if(fsm == null) return;
+            var changed = false;
+            foreach(var meta in fsm.Nodes) {
+                if(meta.behaviours == null) continue;
+                foreach(var b in meta.behaviours) {
+                    changed |= EnsureStateLinks(b);
+                }
+            }
+            if(changed) EditorUtility.SetDirty(fsm);
         }
         private static IEnumerable<StateLink> ScanLinks(object obj,HashSet<object> visited,int depth) {
             if(obj == null || depth > MaxStateLinkScanDepth || visited.Add(obj) == false) yield break;
@@ -1789,7 +1921,7 @@ namespace MornLib {
                     .GetArrayElementAtIndex(nodeIndex)
                     .FindPropertyRelative("behaviours")
                     .GetArrayElementAtIndex(behaviourIndex);
-                MornStateBehaviourPropertyDrawer.BuildFields(section,bProp,skipStateLinks: true);
+                MornStateBehaviourPropertyDrawer.BuildFields(section,bProp,skipStateLinks: true,RequestGraphStructureRefresh);
                 MornStateBehaviourPropertyDrawer.BuildMethodAttributes(section,bProp);
                 section.Bind(so);
             }
@@ -2205,12 +2337,17 @@ namespace MornLib {
             if(_edgesLayer == null) return -1;
             var edgesLocal = _edgesLayer.WorldToLocal(worldPos);
             var backIdx = ComputeBackEdgeIndices();
+            var forwardIdx = ComputeForwardObstacleEdgeIndices();
             for(var ri = 0;ri < _edgeRecords.Count;ri++) {
-                if(IsPointOnEdge(ri,edgesLocal,backIdx)) return ri;
+                if(IsPointOnEdge(ri,edgesLocal,backIdx,forwardIdx)) return ri;
             }
             return -1;
         }
-        private bool IsPointOnEdge(int recIndex,Vector2 localPos,Dictionary<int,int> backEdgeIndex) {
+        private bool IsPointOnEdge(
+            int recIndex,
+            Vector2 localPos,
+            Dictionary<int,int> backEdgeIndex,
+            Dictionary<int,int> forwardEdgeIndex) {
             const float hitDist = 8f;
             var rec = _edgeRecords[recIndex];
             if(rec.outputPort == null || rec.targetNode == null) return false;
@@ -2246,12 +2383,16 @@ namespace MornLib {
                 } else {
                     stub = BackEdgeStub;
                 }
+            } else if(TryGetForwardObstacleLane(recIndex,sourceNode,rec.targetNode,portEdgeWorld,inWorld,forwardEdgeIndex,out var forwardLaneY,out var forwardStub)) {
+                hasObstacle = true;
+                laneY = forwardLaneY;
+                stub = forwardStub;
             }
             var stub1 = new Vector2(fromLocal.x + fromOutDirX * stub,fromLocal.y);
             var stub2 = new Vector2(toLocal.x + toInDirX * stub,toLocal.y);
             if(SegmentDistance(localPos,fromLocal,stub1) < hitDist) return true;
             if(SegmentDistance(localPos,stub2,toLocal) < hitDist) return true;
-            if(isBackEdge && hasObstacle) {
+            if(hasObstacle) {
                 var corner1 = new Vector2(stub1.x,laneY);
                 var corner2 = new Vector2(stub2.x,laneY);
                 if(SegmentDistance(localPos,stub1,corner1) < hitDist) return true;

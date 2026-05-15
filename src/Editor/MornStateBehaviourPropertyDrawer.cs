@@ -16,12 +16,22 @@ namespace MornLib
         }
 
         public static void BuildFields(VisualElement parent,SerializedProperty behaviourProperty,bool skipStateLinks)
+            => BuildFields(parent,behaviourProperty,skipStateLinks,null);
+
+        public static void BuildFields(
+            VisualElement parent,
+            SerializedProperty behaviourProperty,
+            bool skipStateLinks,
+            System.Action onChanged)
         {
             var captured = behaviourProperty.Copy();
-            parent.Add(new IMGUIContainer(() => DrawFieldsImgui(captured,skipStateLinks)));
+            parent.Add(new IMGUIContainer(() => DrawFieldsImgui(captured,skipStateLinks,onChanged)));
         }
 
-        private static void DrawFieldsImgui(SerializedProperty behaviourProperty,bool skipStateLinks)
+        private static void DrawFieldsImgui(
+            SerializedProperty behaviourProperty,
+            bool skipStateLinks,
+            System.Action onChanged)
         {
             var so = behaviourProperty.serializedObject;
             if(so == null || so.targetObject == null)
@@ -32,6 +42,7 @@ namespace MornLib
             try
             {
                 so.Update();
+                EditorGUI.BeginChangeCheck();
                 var iter = behaviourProperty.Copy();
                 var end = iter.GetEndProperty();
                 if(iter.NextVisible(true))
@@ -43,7 +54,12 @@ namespace MornLib
                         EditorGUILayout.PropertyField(iter,true);
                     } while(iter.NextVisible(false));
                 }
+                var changed = EditorGUI.EndChangeCheck();
                 so.ApplyModifiedProperties();
+                if(changed && onChanged != null)
+                {
+                    EditorApplication.delayCall += () => onChanged();
+                }
             }
             catch(System.ObjectDisposedException) { }
             catch(System.InvalidOperationException) { }
