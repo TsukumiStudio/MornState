@@ -307,9 +307,11 @@ namespace MornLib {
                 var hash = 17;
                 foreach(var b in meta.behaviours) {
                     hash = hash * 31 + (b == null ? 0 : b.GetType().GetHashCode());
-                    var count = 0;
-                    if(b != null) foreach(var _ in EnumerateStateLinks(b)) count++;
-                    hash = hash * 31 + count;
+                    if(b != null) {
+                        foreach(var link in EnumerateStateLinks(b)) {
+                            hash = hash * 31 + (link == null ? 0 : link.stateID);
+                        }
+                    }
                 }
                 return hash;
             }
@@ -435,7 +437,11 @@ namespace MornLib {
             _layoutPositions.Clear();
             _nodeSig.Clear();
             _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
-            if(fsm == null) return;
+            if(fsm == null) {
+                _isClearingForReload = false;
+                _edgeLayoutPending = false;
+                return;
+            }
             fsm.ReinjectOwners();
             var positions = ComputeAutoLayout(fsm);
             _layoutPositions.Clear();
@@ -473,7 +479,11 @@ namespace MornLib {
                     }
                 };
                 node.RegisterCallback(firstLayout);
-                node.RegisterCallback<GeometryChangedEvent>(_ => { _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint(); });
+                node.RegisterCallback<GeometryChangedEvent>(_ => {
+                    _edgesLayer?.MarkDirtyRepaint();
+                    _edgesLayerFront?.MarkDirtyRepaint();
+                    schedule.Execute(SettleColumnHeights).StartingIn(0);
+                });
                 if(animate && Vector2.Distance(initialPos,pos) > 0.5f) {
                     _animations[node] = new AnimState { start = initialPos,end = pos,elapsed = 0f,duration = 0.25f };
                 }
@@ -497,7 +507,10 @@ namespace MornLib {
             var anyPendingLayout = false;
             foreach(var pair in _nodeByID) {
                 var node = pair.Value;
-                if(node.layout.width <= 0 || float.IsNaN(node.layout.height)) { anyPendingLayout = true; continue; }
+                if(node.layout.width <= 0 || node.layout.height <= 1f || float.IsNaN(node.layout.width) || float.IsNaN(node.layout.height)) {
+                    anyPendingLayout = true;
+                    continue;
+                }
                 if(_layoutPositions.TryGetValue(pair.Key,out var pos) == false) continue;
                 var key = Mathf.Round(pos.x);
                 if(columns.TryGetValue(key,out var list) == false) {
@@ -2477,7 +2490,10 @@ namespace MornLib {
                 }
                 if(anyCreated) {
                     change.edgesToCreate.Clear();
-                    EditorApplication.delayCall += () => LoadStateMachine(_target);
+                    EditorApplication.delayCall += () => {
+                        ForceFullReload();
+                        LoadStateMachine(_target);
+                    };
                 }
             }
             if(change.elementsToRemove != null) {
@@ -2496,7 +2512,10 @@ namespace MornLib {
                 }
                 if(anyEdge) {
                     EditorUtility.SetDirty(_target);
-                    EditorApplication.delayCall += () => LoadStateMachine(_target);
+                    EditorApplication.delayCall += () => {
+                        ForceFullReload();
+                        LoadStateMachine(_target);
+                    };
                 }
                 if(removedIDs.Count > 0) {
                     Undo.RegisterCompleteObjectUndo(_target,"Remove State");
