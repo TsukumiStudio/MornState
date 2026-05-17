@@ -42,6 +42,7 @@ namespace MornLib
             try
             {
                 so.Update();
+                var beforeStateLinkSig = skipStateLinks ? ComputeStateLinkSig(behaviourProperty) : 0;
                 EditorGUI.BeginChangeCheck();
                 var iter = behaviourProperty.Copy();
                 var end = iter.GetEndProperty();
@@ -58,7 +59,12 @@ namespace MornLib
                 so.ApplyModifiedProperties();
                 if(changed && onChanged != null)
                 {
-                    EditorApplication.delayCall += () => onChanged();
+                    so.Update();
+                    var afterStateLinkSig = skipStateLinks ? ComputeStateLinkSig(behaviourProperty) : 0;
+                    if(skipStateLinks == false || beforeStateLinkSig != afterStateLinkSig)
+                    {
+                        EditorApplication.delayCall += () => onChanged();
+                    }
                 }
             }
             catch(System.ObjectDisposedException) { }
@@ -91,6 +97,40 @@ namespace MornLib
         {
             return prop.propertyType == SerializedPropertyType.Generic
                    && prop.type == nameof(StateLink);
+        }
+
+        private static int ComputeStateLinkSig(SerializedProperty behaviourProperty)
+        {
+            unchecked
+            {
+                var hash = 17;
+                var iter = behaviourProperty.Copy();
+                var end = iter.GetEndProperty();
+                if(iter.NextVisible(true))
+                {
+                    do
+                    {
+                        if(SerializedProperty.EqualContents(iter,end)) break;
+                        if(IsStateLink(iter) == false) continue;
+                        hash = hash * 31 + iter.propertyPath.GetHashCode();
+                        hash = hash * 31 + ReadRelativeInt(iter,"_stateID");
+                        hash = hash * 31 + ReadRelativeString(iter,"_name").GetHashCode();
+                    } while(iter.NextVisible(false));
+                }
+                return hash;
+            }
+        }
+
+        private static int ReadRelativeInt(SerializedProperty prop,string name)
+        {
+            var child = prop.FindPropertyRelative(name);
+            return child != null ? child.intValue : 0;
+        }
+
+        private static string ReadRelativeString(SerializedProperty prop,string name)
+        {
+            var child = prop.FindPropertyRelative(name);
+            return child != null ? child.stringValue ?? "" : "";
         }
 
         private static object ResolveTarget(SerializedProperty property)

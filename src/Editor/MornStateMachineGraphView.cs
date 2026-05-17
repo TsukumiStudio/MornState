@@ -112,7 +112,6 @@ namespace MornLib {
         private void ForceRefresh() {
             _view?.ForceFullReload();
             Reload();
-            _view?.FrameAllNodes();
         }
         private void Reload() {
             if(_view == null) return;
@@ -373,6 +372,7 @@ namespace MornLib {
                 if(Vector2.Distance(cur,pos) <= 0.5f) continue;
                 n.SetPosition(new Rect(pos.x,pos.y,0,0));
                 n.style.translate = StyleKeyword.None;
+                _animations.Remove(n);
             }
             _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
         }
@@ -414,21 +414,8 @@ namespace MornLib {
                 _target = fsm;
                 fsm.ReinjectOwners();
                 EnsureStateLinks(fsm);
-                var positionsFast = ComputeAutoLayout(fsm);
-                _layoutPositions.Clear();
-                foreach(var kv in positionsFast) _layoutPositions[kv.Key] = kv.Value;
-                foreach(var meta in fsm.Nodes) {
-                    if(_nodeByID.TryGetValue(meta.id,out var node) == false) continue;
-                    var pos = positionsFast.TryGetValue(meta.id,out var p) ? p : new Vector2(40,40);
-                    var cur = GetAbsolutePosition(node);
-                    if(Vector2.Distance(cur,pos) > 0.5f) {
-                        node.SetPosition(new Rect(pos.x,pos.y,0,0));
-                        node.style.translate = StyleKeyword.None;
-                    }
-                }
                 RebuildEdgeRecords(fsm);
                 UpdateHighlights();
-                schedule.Execute(SettleColumnHeights).StartingIn(0);
                 return;
             }
             _isClearingForReload = true;
@@ -460,6 +447,7 @@ namespace MornLib {
             foreach(var kv in positions) _layoutPositions[kv.Key] = kv.Value;
             var animate = false;
             var pendingLayoutCount = new[] { fsm.Nodes.Count };
+            var createdNodes = new List<Node>();
             foreach(var meta in fsm.Nodes) {
                 var pos = positions.TryGetValue(meta.id,out var p) ? p : new Vector2(40,40);
                 Vector2 initialPos;
@@ -474,6 +462,7 @@ namespace MornLib {
                 AddElement(node);
                 _edgesLayer.SendToBack();
                 _nodeByID[meta.id] = node;
+                createdNodes.Add(node);
                 var restPos = animate ? pos : initialPos;
                 node.SetPosition(new Rect(restPos.x,restPos.y,0,0));
                 var offset = initialPos - restPos;
@@ -481,10 +470,13 @@ namespace MornLib {
                 node.style.visibility = Visibility.Hidden;
                 EventCallback<GeometryChangedEvent> firstLayout = null;
                 firstLayout = _ => {
-                    node.style.visibility = Visibility.Visible;
                     node.UnregisterCallback(firstLayout);
                     pendingLayoutCount[0]--;
                     if(pendingLayoutCount[0] <= 0) {
+                        SettleColumnHeights();
+                        foreach(var createdNode in createdNodes) {
+                            createdNode.style.visibility = Visibility.Visible;
+                        }
                         _edgeLayoutPending = false;
                         _edgesLayer?.MarkDirtyRepaint();
                         _edgesLayerFront?.MarkDirtyRepaint();
@@ -494,7 +486,6 @@ namespace MornLib {
                 node.RegisterCallback<GeometryChangedEvent>(_ => {
                     _edgesLayer?.MarkDirtyRepaint();
                     _edgesLayerFront?.MarkDirtyRepaint();
-                    schedule.Execute(SettleColumnHeights).StartingIn(0);
                 });
                 if(animate && Vector2.Distance(initialPos,pos) > 0.5f) {
                     _animations[node] = new AnimState { start = initialPos,end = pos,elapsed = 0f,duration = 0.25f };
@@ -506,8 +497,13 @@ namespace MornLib {
             RebuildEdgeRecords(fsm);
             UpdateHighlights();
             _isClearingForReload = false;
-            if(pendingLayoutCount[0] <= 0) _edgeLayoutPending = false;
-            schedule.Execute(SettleColumnHeights).StartingIn(0);
+            if(pendingLayoutCount[0] <= 0) {
+                SettleColumnHeights();
+                foreach(var createdNode in createdNodes) {
+                    createdNode.style.visibility = Visibility.Visible;
+                }
+                _edgeLayoutPending = false;
+            }
             if(targetChanged) {
                 schedule.Execute(FrameAllNodesNow).StartingIn(150);
             }
@@ -540,9 +536,8 @@ namespace MornLib {
                     var cur = GetAbsolutePosition(entry.node);
                     if(Mathf.Abs(cur.y - y) > 0.5f) {
                         entry.node.SetPosition(new Rect(newPos.x,newPos.y,0,0));
-                        var off = cur - newPos;
-                        entry.node.style.translate = new StyleTranslate(new Translate(off.x,off.y,0));
-                        _animations[entry.node] = new AnimState { start = cur,end = newPos,elapsed = 0f,duration = 0.2f };
+                        entry.node.style.translate = StyleKeyword.None;
+                        _animations.Remove(entry.node);
                         _layoutPositions[entry.id] = newPos;
                         changed = true;
                     }
@@ -963,6 +958,7 @@ namespace MornLib {
                 _graphRefreshQueued = false;
                 if(_target == null) return;
                 EnsureStateLinks(_target);
+                ForceFullReload();
                 LoadStateMachine(_target);
             };
         }
@@ -1223,7 +1219,11 @@ namespace MornLib {
                     }
                     if(item == null) continue;
                     if(item is StateLink) continue;
-                    changed |= EnsureStateLinksInObject(item,visited,depth + 1);
+                    var itemChanged = EnsureStateLinksInObject(item,visited,depth + 1);
+                    if(itemChanged && item.GetType().IsValueType) {
+                        list[i] = item;
+                    }
+                    changed |= itemChanged;
                 }
                 return changed;
             }
@@ -1238,7 +1238,11 @@ namespace MornLib {
                     continue;
                 }
                 if(value == null) continue;
-                changed |= EnsureStateLinksInObject(value,visited,depth + 1);
+                var valueChanged = EnsureStateLinksInObject(value,visited,depth + 1);
+                if(valueChanged && value.GetType().IsValueType) {
+                    entry.Field.SetValue(obj,value);
+                }
+                changed |= valueChanged;
             }
             return changed;
         }
