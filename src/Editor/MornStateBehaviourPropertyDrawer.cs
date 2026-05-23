@@ -73,12 +73,27 @@ namespace MornLib
         }
 
         public static void BuildMethodAttributes(VisualElement parent,SerializedProperty behaviourProperty)
+            => BuildMethodAttributes(parent,behaviourProperty,null);
+
+        public static void BuildMethodAttributes(
+            VisualElement parent,
+            SerializedProperty behaviourProperty,
+            System.Action onChanged)
         {
             var target = ResolveTarget(behaviourProperty);
             if(target == null) return;
             if(HasCustomAttributeMethods(target.GetType()) == false) return;
             var ownerObject = behaviourProperty.serializedObject.targetObject;
-            parent.Add(new IMGUIContainer(() => MornEditorDrawerUtil.HandleCustomAttributesForObject(target,ownerObject)));
+            parent.Add(new IMGUIContainer(() => {
+                var beforeStateLinkSig = onChanged != null ? ComputeStateLinkSig(behaviourProperty) : 0;
+                MornEditorDrawerUtil.HandleCustomAttributesForObject(target,ownerObject);
+                if(onChanged == null) return;
+                behaviourProperty.serializedObject.Update();
+                var afterStateLinkSig = ComputeStateLinkSig(behaviourProperty);
+                if(beforeStateLinkSig != afterStateLinkSig) {
+                    EditorApplication.delayCall += () => onChanged();
+                }
+            }));
         }
 
         private static bool HasCustomAttributeMethods(System.Type type)

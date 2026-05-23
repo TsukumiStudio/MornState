@@ -1929,7 +1929,7 @@ namespace MornLib {
                     .FindPropertyRelative("behaviours")
                     .GetArrayElementAtIndex(behaviourIndex);
                 MornStateBehaviourPropertyDrawer.BuildFields(section,bProp,skipStateLinks: true,RequestGraphStructureRefresh);
-                MornStateBehaviourPropertyDrawer.BuildMethodAttributes(section,bProp);
+                MornStateBehaviourPropertyDrawer.BuildMethodAttributes(section,bProp,RequestGraphStructureRefresh);
                 section.Bind(so);
             }
             foreach(var (path,link) in EnumerateStateLinkFields(state)) {
