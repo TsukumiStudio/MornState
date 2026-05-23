@@ -604,7 +604,7 @@ namespace MornLib {
                 var toLocal = _edgesLayer.WorldToLocal(inWorld);
                 if(isSelfLoop) {
                     DrawBezierEdge(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight);
-                } else if(isBackEdge && backEdgeIndex.TryGetValue(ri,out var laneIdx)) {
+                } else if(IsLongBackEdgeBetween(sourceCenter,rec.targetNode.worldBound.center) && backEdgeIndex.TryGetValue(ri,out var laneIdx)) {
                     var laneY = ComputeBackEdgeLaneLocalY(sourceNode,rec.targetNode,laneIdx);
                     DrawBackEdgeL(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,laneY,GetBackEdgeStub(laneIdx));
                 } else if(TryGetForwardObstacleLane(ri,sourceNode,rec.targetNode,portEdgeWorld,inWorld,forwardEdgeIndex,out var forwardLaneY,out var forwardStub)) {
@@ -675,7 +675,7 @@ namespace MornLib {
                 else inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMin + BackEdgeCornerInset);
                 var fromLocal = _edgesLayerFront.WorldToLocal(portEdgeWorld);
                 var toLocal = _edgesLayerFront.WorldToLocal(inWorld);
-                if(isBackEdge) {
+                if(IsLongBackEdgeBetween(sourceCenter,targetCenter)) {
                     var stub = backEdgeIndex.TryGetValue(ri,out var idx) ? GetBackEdgeStub(idx) : BackEdgeStub;
                     DrawBackEdgeStubsFront(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,stub);
                 } else if(TryGetForwardObstacleLane(ri,sourceNode,rec.targetNode,portEdgeWorld,inWorld,forwardEdgeIndex,out _,out var forwardStub)) {
@@ -737,6 +737,9 @@ namespace MornLib {
         private static bool IsBackEdgeBetween(Vector2 sourceCenter,Vector2 targetCenter) {
             return targetCenter.x < sourceCenter.x - BackEdgeDetectThreshold;
         }
+        private static bool IsLongBackEdgeBetween(Vector2 sourceCenter,Vector2 targetCenter) {
+            return targetCenter.x < sourceCenter.x - NodeColumnSpacing * 1.25f;
+        }
         private Dictionary<int,int> ComputeBackEdgeIndices() {
             var result = new Dictionary<int,int>();
             var lanes = new List<(int recIndex,float minX,float maxX,float corridorWidth,float sourceY)>();
@@ -745,7 +748,7 @@ namespace MornLib {
                 if(rec.outputPort == null || rec.targetNode == null) continue;
                 var sourceNode = rec.outputPort.GetFirstAncestorOfType<Node>();
                 if(sourceNode == null || sourceNode == rec.targetNode) continue;
-                if(IsBackEdgeBetween(sourceNode.worldBound.center,rec.targetNode.worldBound.center) == false) continue;
+                if(IsLongBackEdgeBetween(sourceNode.worldBound.center,rec.targetNode.worldBound.center) == false) continue;
                 var minX = Mathf.Min(sourceNode.worldBound.xMax,rec.targetNode.worldBound.xMax);
                 var maxX = Mathf.Max(sourceNode.worldBound.xMax,rec.targetNode.worldBound.xMax);
                 lanes.Add((ri,minX,maxX,maxX - minX,sourceNode.worldBound.center.y));
@@ -997,7 +1000,7 @@ namespace MornLib {
             var stubLen = ForwardEdgeStub;
             var corridorObstacle = false;
             var laneY = 0f;
-            if(isBackEdge && backIdx.TryGetValue(recIndex,out var laneIdxLocal)) {
+            if(IsLongBackEdgeBetween(sourceCenter,targetCenter) && backIdx.TryGetValue(recIndex,out var laneIdxLocal)) {
                 corridorObstacle = true;
                 laneY = ComputeBackEdgeLaneLocalY(sourceNode,rec.targetNode,laneIdxLocal);
                 stubLen = GetBackEdgeStub(laneIdxLocal);
@@ -2376,7 +2379,7 @@ namespace MornLib {
             var stub = ForwardEdgeStub;
             var hasObstacle = false;
             var laneY = 0f;
-            if(isBackEdge && backEdgeIndex.TryGetValue(recIndex,out var idx)) {
+            if(IsLongBackEdgeBetween(sourceCenter,targetCenter) && backEdgeIndex.TryGetValue(recIndex,out var idx)) {
                 hasObstacle = true;
                 laneY = ComputeBackEdgeLaneLocalY(sourceNode,rec.targetNode,idx);
                 stub = GetBackEdgeStub(idx);
