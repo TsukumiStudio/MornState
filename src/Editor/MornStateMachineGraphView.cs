@@ -605,15 +605,8 @@ namespace MornLib {
                 if(isSelfLoop) {
                     DrawBezierEdge(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight);
                 } else if(isBackEdge && backEdgeIndex.TryGetValue(ri,out var laneIdx)) {
-                    var pathYMinWorld = Mathf.Min(portEdgeWorld.y,inWorld.y);
-                    var pathYMaxWorld = Mathf.Max(portEdgeWorld.y,inWorld.y);
-                    var corridor = ComputeMaxBottomBetween(sourceNode,rec.targetNode,pathYMinWorld,pathYMaxWorld);
-                    if(corridor.hasObstacle) {
-                        var laneY = corridor.laneLocalY + BackEdgeBaseDepth + laneIdx * BackEdgeStepDepth;
-                        DrawBackEdgeL(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,laneY,GetBackEdgeStub(laneIdx));
-                    } else {
-                        DrawForwardEdgeStubCurve(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,BackEdgeStub);
-                    }
+                    var laneY = ComputeBackEdgeLaneLocalY(sourceNode,rec.targetNode,laneIdx);
+                    DrawBackEdgeL(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,laneY,GetBackEdgeStub(laneIdx));
                 } else if(TryGetForwardObstacleLane(ri,sourceNode,rec.targetNode,portEdgeWorld,inWorld,forwardEdgeIndex,out var forwardLaneY,out var forwardStub)) {
                     DrawBackEdgeL(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,forwardLaneY,forwardStub);
                 } else {
@@ -683,12 +676,7 @@ namespace MornLib {
                 var fromLocal = _edgesLayerFront.WorldToLocal(portEdgeWorld);
                 var toLocal = _edgesLayerFront.WorldToLocal(inWorld);
                 if(isBackEdge) {
-                    var pathYMin = Mathf.Min(portEdgeWorld.y,inWorld.y);
-                    var pathYMax = Mathf.Max(portEdgeWorld.y,inWorld.y);
-                    var corridor = ComputeMaxBottomBetween(sourceNode,rec.targetNode,pathYMin,pathYMax);
-                    var stub = (corridor.hasObstacle && backEdgeIndex.TryGetValue(ri,out var idx))
-                        ? GetBackEdgeStub(idx)
-                        : BackEdgeStub;
+                    var stub = backEdgeIndex.TryGetValue(ri,out var idx) ? GetBackEdgeStub(idx) : BackEdgeStub;
                     DrawBackEdgeStubsFront(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,stub);
                 } else if(TryGetForwardObstacleLane(ri,sourceNode,rec.targetNode,portEdgeWorld,inWorld,forwardEdgeIndex,out _,out var forwardStub)) {
                     DrawBackEdgeStubsFront(p,fromLocal,toLocal,sourcePortOnLeft,toReceivesFromRight,forwardStub);
@@ -721,6 +709,19 @@ namespace MornLib {
             if(hasObstacle == false) maxBottomWorld = Mathf.Max(sourceNode.worldBound.yMax,targetNode.worldBound.yMax);
             var local = _edgesLayer.WorldToLocal(new Vector2(0,maxBottomWorld)).y;
             return (local,hasObstacle);
+        }
+        private float ComputeBackEdgeLaneLocalY(Node sourceNode,Node targetNode,int laneIdx) {
+            var minX = Mathf.Min(sourceNode.worldBound.center.x,targetNode.worldBound.center.x);
+            var maxX = Mathf.Max(sourceNode.worldBound.center.x,targetNode.worldBound.center.x);
+            var maxBottomWorld = Mathf.Max(sourceNode.worldBound.yMax,targetNode.worldBound.yMax);
+            foreach(var pair in _nodeByID) {
+                var n = pair.Value;
+                var cx = n.worldBound.center.x;
+                if(cx < minX || cx > maxX) continue;
+                if(n.worldBound.yMax > maxBottomWorld) maxBottomWorld = n.worldBound.yMax;
+            }
+            var baseLocalY = _edgesLayer.WorldToLocal(new Vector2(0,maxBottomWorld)).y;
+            return baseLocalY + BackEdgeBaseDepth + laneIdx * BackEdgeStepDepth;
         }
         private static Vector2 ResolvePortAnchor(Port port,bool onLeftSide,float fallbackY) {
             var connector = port.Q("connector");
@@ -997,16 +998,9 @@ namespace MornLib {
             var corridorObstacle = false;
             var laneY = 0f;
             if(isBackEdge && backIdx.TryGetValue(recIndex,out var laneIdxLocal)) {
-                var pathYMin = Mathf.Min(portEdgeWorld.y,inWorld.y);
-                var pathYMax = Mathf.Max(portEdgeWorld.y,inWorld.y);
-                var corridor = ComputeMaxBottomBetween(sourceNode,rec.targetNode,pathYMin,pathYMax);
-                corridorObstacle = corridor.hasObstacle;
-                if(corridorObstacle) {
-                    laneY = corridor.laneLocalY + BackEdgeBaseDepth + laneIdxLocal * BackEdgeStepDepth;
-                    stubLen = GetBackEdgeStub(laneIdxLocal);
-                } else {
-                    stubLen = BackEdgeStub;
-                }
+                corridorObstacle = true;
+                laneY = ComputeBackEdgeLaneLocalY(sourceNode,rec.targetNode,laneIdxLocal);
+                stubLen = GetBackEdgeStub(laneIdxLocal);
             } else if(TryGetForwardObstacleLane(recIndex,sourceNode,rec.targetNode,portEdgeWorld,inWorld,forwardIdx,out var forwardLaneY,out var forwardStub)) {
                 corridorObstacle = true;
                 laneY = forwardLaneY;
@@ -2383,16 +2377,9 @@ namespace MornLib {
             var hasObstacle = false;
             var laneY = 0f;
             if(isBackEdge && backEdgeIndex.TryGetValue(recIndex,out var idx)) {
-                var pathYMin = Mathf.Min(portEdgeWorld.y,inWorld.y);
-                var pathYMax = Mathf.Max(portEdgeWorld.y,inWorld.y);
-                var corridor = ComputeMaxBottomBetween(sourceNode,rec.targetNode,pathYMin,pathYMax);
-                hasObstacle = corridor.hasObstacle;
-                if(hasObstacle) {
-                    laneY = corridor.laneLocalY + BackEdgeBaseDepth + idx * BackEdgeStepDepth;
-                    stub = GetBackEdgeStub(idx);
-                } else {
-                    stub = BackEdgeStub;
-                }
+                hasObstacle = true;
+                laneY = ComputeBackEdgeLaneLocalY(sourceNode,rec.targetNode,idx);
+                stub = GetBackEdgeStub(idx);
             } else if(TryGetForwardObstacleLane(recIndex,sourceNode,rec.targetNode,portEdgeWorld,inWorld,forwardEdgeIndex,out var forwardLaneY,out var forwardStub)) {
                 hasObstacle = true;
                 laneY = forwardLaneY;
