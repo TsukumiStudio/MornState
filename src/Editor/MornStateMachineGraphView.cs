@@ -738,7 +738,7 @@ namespace MornLib {
         }
         private Dictionary<int,int> ComputeBackEdgeIndices() {
             var result = new Dictionary<int,int>();
-            var lanes = new List<(int recIndex,float minX,float maxX,float corridorWidth)>();
+            var lanes = new List<(int recIndex,float minX,float maxX,float corridorWidth,float sourceY)>();
             for(var ri = 0;ri < _edgeRecords.Count;ri++) {
                 var rec = _edgeRecords[ri];
                 if(rec.outputPort == null || rec.targetNode == null) continue;
@@ -747,9 +747,15 @@ namespace MornLib {
                 if(IsBackEdgeBetween(sourceNode.worldBound.center,rec.targetNode.worldBound.center) == false) continue;
                 var minX = Mathf.Min(sourceNode.worldBound.xMax,rec.targetNode.worldBound.xMax);
                 var maxX = Mathf.Max(sourceNode.worldBound.xMax,rec.targetNode.worldBound.xMax);
-                lanes.Add((ri,minX,maxX,maxX - minX));
+                lanes.Add((ri,minX,maxX,maxX - minX,sourceNode.worldBound.center.y));
             }
-            lanes.Sort((a,b) => a.corridorWidth.CompareTo(b.corridorWidth));
+            lanes.Sort((a,b) => {
+                var width = a.corridorWidth.CompareTo(b.corridorWidth);
+                if(width != 0) return width;
+                var sourceY = b.sourceY.CompareTo(a.sourceY);
+                if(sourceY != 0) return sourceY;
+                return a.recIndex.CompareTo(b.recIndex);
+            });
             for(var i = 0;i < lanes.Count;i++) result[lanes[i].recIndex] = i;
             return result;
         }
