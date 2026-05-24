@@ -67,6 +67,7 @@ namespace MornLib
                     }
                 }
             }
+            catch(System.ArgumentException e) when(IsImguiLayoutMismatch(e)) { }
             catch(System.ObjectDisposedException) { }
             catch(System.InvalidOperationException) { }
             catch(System.NullReferenceException) { }
@@ -85,14 +86,24 @@ namespace MornLib
             if(HasCustomAttributeMethods(target.GetType()) == false) return;
             var ownerObject = behaviourProperty.serializedObject.targetObject;
             parent.Add(new IMGUIContainer(() => {
-                var beforeStateLinkSig = onChanged != null ? ComputeStateLinkSig(behaviourProperty) : 0;
-                MornEditorDrawerUtil.HandleCustomAttributesForObject(target,ownerObject);
-                if(onChanged == null) return;
-                behaviourProperty.serializedObject.Update();
-                var afterStateLinkSig = ComputeStateLinkSig(behaviourProperty);
-                if(beforeStateLinkSig != afterStateLinkSig) {
-                    EditorApplication.delayCall += () => onChanged();
+                try
+                {
+                    var so = behaviourProperty.serializedObject;
+                    if(so == null || so.targetObject == null) return;
+                    var beforeStateLinkSig = onChanged != null ? ComputeStateLinkSig(behaviourProperty) : 0;
+                    MornEditorDrawerUtil.HandleCustomAttributesForObject(target,ownerObject);
+                    if(onChanged == null) return;
+                    if(so.targetObject == null) return;
+                    so.Update();
+                    var afterStateLinkSig = ComputeStateLinkSig(behaviourProperty);
+                    if(beforeStateLinkSig != afterStateLinkSig) {
+                        EditorApplication.delayCall += () => onChanged();
+                    }
                 }
+                catch(System.ArgumentException e) when(IsDestroyedSerializedObject(e)) { }
+                catch(System.ObjectDisposedException) { }
+                catch(System.InvalidOperationException) { }
+                catch(System.NullReferenceException) { }
             }));
         }
 
@@ -146,6 +157,17 @@ namespace MornLib
         {
             var child = prop.FindPropertyRelative(name);
             return child != null ? child.stringValue ?? "" : "";
+        }
+
+        private static bool IsImguiLayoutMismatch(System.ArgumentException e)
+        {
+            return e.Message.Contains("Getting control")
+                   && e.Message.Contains("position in a group with only");
+        }
+
+        private static bool IsDestroyedSerializedObject(System.ArgumentException e)
+        {
+            return e.Message.Contains("SerializedObject target has been destroyed");
         }
 
         private static object ResolveTarget(SerializedProperty property)

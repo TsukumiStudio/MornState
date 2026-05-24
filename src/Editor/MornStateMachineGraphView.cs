@@ -33,7 +33,11 @@ namespace MornLib {
         private int _lastSelectionID;
         private int _lastSelectionFsmID;
         private int _lastAppliedFsmID;
+        private int _pinnedResolveRetryCount;
+        private bool _pinnedResolveRetryQueued;
+        private const int MaxPinnedResolveRetryCount = 5;
         private void OnEnable() {
+            rootVisualElement.Clear();
             _sidebarVisible = SessionState.GetBool(SidebarVisibleKey,true);
             var content = new VisualElement();
             content.style.flexDirection = FlexDirection.Row;
@@ -96,6 +100,10 @@ namespace MornLib {
             toolbar.Add(_sidebarToggle);
             rootVisualElement.Insert(0,toolbar);
             SetSidebarVisible(_sidebarVisible);
+            Selection.selectionChanged -= Reload;
+            Undo.undoRedoPerformed -= Reload;
+            EditorApplication.update -= SyncSelectionFsm;
+            EditorApplication.playModeStateChanged -= OnPlayModeChanged;
             Selection.selectionChanged += Reload;
             Undo.undoRedoPerformed += Reload;
             EditorApplication.update += SyncSelectionFsm;
@@ -128,8 +136,17 @@ namespace MornLib {
                 SetPinned(fsm);
             } else if(fsm == null) {
                 fsm = ResolvePinned();
+                if(fsm == null && _targetField != null && _targetField.value is MornStateMachine fieldFsm) {
+                    fsm = fieldFsm;
+                    SetPinned(fsm);
+                }
                 if(_sidebarRoot == null) _sidebarRoot = fsm;
             }
+            if(fsm == null && HasPinnedSession() && _pinnedResolveRetryCount < MaxPinnedResolveRetryCount) {
+                QueuePinnedResolveRetry();
+                return;
+            }
+            if(fsm != null) _pinnedResolveRetryCount = 0;
             ApplyFsm(fsm);
         }
         private void SyncSelectionFsm() {
@@ -211,6 +228,19 @@ namespace MornLib {
             _pinned = fsm;
             var id = fsm != null ? GlobalObjectId.GetGlobalObjectIdSlow(fsm).ToString() : "";
             SessionState.SetString(PinnedGlobalIdKey,id);
+            if(fsm != null) _pinnedResolveRetryCount = 0;
+        }
+        private bool HasPinnedSession() {
+            return string.IsNullOrEmpty(SessionState.GetString(PinnedGlobalIdKey,"")) == false;
+        }
+        private void QueuePinnedResolveRetry() {
+            if(_pinnedResolveRetryQueued) return;
+            _pinnedResolveRetryQueued = true;
+            _pinnedResolveRetryCount++;
+            EditorApplication.delayCall += () => {
+                _pinnedResolveRetryQueued = false;
+                Reload();
+            };
         }
         private MornStateMachine ResolvePinned() {
             if(_pinned != null) return _pinned;
@@ -274,6 +304,8 @@ namespace MornLib {
         private const float ForwardEdgeStub = 16f;
         private const int HighlightBorderWidth = 4;
         private const float NodeColumnSpacing = 400f;
+        private const double MaintenanceIntervalSeconds = 0.2;
+        private const double IdleEdgeRepaintIntervalSeconds = 0.1;
         private const string BehaviourClipboardPrefix = "MORNSTATE_BEHAVIOUR:";
         private static readonly Dictionary<System.Type,MonoScript> _scriptCache = new();
         public MornStateMachineGraphView() {
@@ -345,7 +377,8 @@ namespace MornLib {
                 foreach(var b in meta.behaviours) {
                     hash = hash * 31 + (b == null ? 0 : b.GetType().GetHashCode());
                     if(b != null) {
-                        foreach(var link in EnumerateStateLinks(b)) {
+                        foreach(var (path,link) in EnumerateStateLinkFields(b)) {
+                            hash = hash * 31 + path.GetHashCode();
                             hash = hash * 31 + (link == null ? 0 : link.stateID);
                         }
                     }
@@ -434,10 +467,15 @@ namespace MornLib {
             UpdateViewTransform(position,new Vector3(scale,scale,1f));
         }
         public void LoadStateMachine(MornStateMachine fsm) {
+            var stateLinksChanged = EnsureStateLinks(fsm);
             if(IsStructurallySame(fsm)) {
                 _target = fsm;
                 fsm.ReinjectOwners();
-                EnsureStateLinks(fsm);
+                if(stateLinksChanged) {
+                    ForceFullReload();
+                    LoadStateMachine(fsm);
+                    return;
+                }
                 RebuildEdgeRecords(fsm);
                 UpdateHighlights();
                 return;
@@ -465,7 +503,6 @@ namespace MornLib {
                 return;
             }
             fsm.ReinjectOwners();
-            EnsureStateLinks(fsm);
             var positions = ComputeAutoLayout(fsm);
             _layoutPositions.Clear();
             foreach(var kv in positions) _layoutPositions[kv.Key] = kv.Value;
@@ -620,9 +657,9 @@ namespace MornLib {
                     isBackEdge = IsBackEdgeBetween(sourceCenter,targetCenter);
                 }
                 if(isBackEdge) {
-                    inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMax - BackEdgeCornerInset);
+                    inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMax - ScaledBackEdgeCornerInset);
                 } else if(isSelfLoop == false) {
-                    inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMin + BackEdgeCornerInset);
+                    inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMin + ScaledBackEdgeCornerInset);
                 }
                 var fromLocal = _edgesLayer.WorldToLocal(portEdgeWorld);
                 var toLocal = _edgesLayer.WorldToLocal(inWorld);
@@ -695,8 +732,8 @@ namespace MornLib {
                     ? new Vector2(rec.targetNode.worldBound.xMax,rec.targetNode.worldBound.center.y)
                     : new Vector2(rec.targetNode.worldBound.x,rec.targetNode.worldBound.center.y);
                 var isBackEdge = IsBackEdgeBetween(sourceCenter,targetCenter);
-                if(isBackEdge) inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMax - BackEdgeCornerInset);
-                else inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMin + BackEdgeCornerInset);
+                if(isBackEdge) inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMax - ScaledBackEdgeCornerInset);
+                else inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMin + ScaledBackEdgeCornerInset);
                 var fromLocal = _edgesLayerFront.WorldToLocal(portEdgeWorld);
                 var toLocal = _edgesLayerFront.WorldToLocal(inWorld);
                 if(IsLongBackEdgeBetween(sourceCenter,targetCenter)) {
@@ -758,11 +795,21 @@ namespace MornLib {
                 : new Vector2(port.worldBound.xMax,fallbackY);
         }
         private static float GetBackEdgeStub(int laneIdx) => BackEdgeStub + laneIdx * BackEdgeStubStep;
-        private static bool IsBackEdgeBetween(Vector2 sourceCenter,Vector2 targetCenter) {
-            return targetCenter.x < sourceCenter.x - BackEdgeDetectThreshold;
+        private float ScaledBackEdgeCornerInset => BackEdgeCornerInset * CurrentViewScale;
+        private float ScaledBackEdgeDetectThreshold => BackEdgeDetectThreshold * CurrentViewScale;
+        private float ScaledNodeColumnSpacing => NodeColumnSpacing * CurrentViewScale;
+        private float CurrentViewScale {
+            get {
+                var origin = contentViewContainer.LocalToWorld(Vector2.zero);
+                var unit = contentViewContainer.LocalToWorld(Vector2.right);
+                return Mathf.Max(0.0001f,Mathf.Abs(unit.x - origin.x));
+            }
         }
-        private static bool IsLongBackEdgeBetween(Vector2 sourceCenter,Vector2 targetCenter) {
-            return targetCenter.x < sourceCenter.x - NodeColumnSpacing * 1.25f;
+        private bool IsBackEdgeBetween(Vector2 sourceCenter,Vector2 targetCenter) {
+            return targetCenter.x < sourceCenter.x - ScaledBackEdgeDetectThreshold;
+        }
+        private bool IsLongBackEdgeBetween(Vector2 sourceCenter,Vector2 targetCenter) {
+            return targetCenter.x < sourceCenter.x - ScaledNodeColumnSpacing * 1.25f;
         }
         private Dictionary<int,int> ComputeBackEdgeIndices() {
             var result = new Dictionary<int,int>();
@@ -953,20 +1000,38 @@ namespace MornLib {
             _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
         }
         private double _lastStructuralCheckTime;
+        private double _lastMaintenanceTime;
+        private double _lastIdleEdgeRepaintTime;
         private bool _graphRefreshQueued;
         private void OnEditorUpdate() {
+            var hadAnimations = _animations.Count > 0;
             TickAnimations();
             var snapshot = Application.isPlaying && _target != null ? _target.CurrentStateID : 0;
             if(snapshot != _lastCurrentSnapshot) {
                 _lastCurrentSnapshot = snapshot;
                 UpdateHighlights();
             }
-            PollDragGhost();
-            ReconcilePortSides();
-            SyncPortLabels();
-            UpdateRuntimeBadges();
-            DetectStructuralChange();
-            _edgesLayer?.MarkDirtyRepaint(); _edgesLayerFront?.MarkDirtyRepaint();
+            if(_isDraggingEdge) {
+                PollDragGhost();
+            }
+
+            var now = EditorApplication.timeSinceStartup;
+            if(now - _lastMaintenanceTime >= MaintenanceIntervalSeconds) {
+                _lastMaintenanceTime = now;
+                ReconcilePortSides();
+                SyncPortLabels();
+                UpdateRuntimeBadges();
+                DetectStructuralChange();
+            }
+
+            if(hadAnimations || _animations.Count > 0 || _isDraggingEdge || _isDraggingBehaviour) {
+                _edgesLayer?.MarkDirtyRepaint();
+                _edgesLayerFront?.MarkDirtyRepaint();
+            } else if(now - _lastIdleEdgeRepaintTime >= IdleEdgeRepaintIntervalSeconds) {
+                _lastIdleEdgeRepaintTime = now;
+                _edgesLayer?.MarkDirtyRepaint();
+                _edgesLayerFront?.MarkDirtyRepaint();
+            }
         }
         private void DetectStructuralChange() {
             if(_target == null || _hasLoadedOnce == false) return;
@@ -974,7 +1039,11 @@ namespace MornLib {
             if(now - _lastStructuralCheckTime < 0.25) return;
             _lastStructuralCheckTime = now;
             if(_isDraggingEdge || _isDraggingBehaviour) return;
-            EnsureStateLinks(_target);
+            if(EnsureStateLinks(_target)) {
+                ForceFullReload();
+                LoadStateMachine(_target);
+                return;
+            }
             foreach(var meta in _target.Nodes) {
                 if(_nodeByID.ContainsKey(meta.id) == false) { LoadStateMachine(_target); return; }
                 var sig = ComputeNodeSig(meta);
@@ -1017,8 +1086,8 @@ namespace MornLib {
                 ? new Vector2(rec.targetNode.worldBound.xMax,targetCenter.y)
                 : new Vector2(rec.targetNode.worldBound.x,targetCenter.y);
             var isBackEdge = IsBackEdgeBetween(sourceCenter,targetCenter);
-            if(isBackEdge) inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMax - BackEdgeCornerInset);
-            else inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMin + BackEdgeCornerInset);
+            if(isBackEdge) inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMax - ScaledBackEdgeCornerInset);
+            else inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMin + ScaledBackEdgeCornerInset);
             var fromOutDirX = sourcePortOnLeft ? -1f : 1f;
             var toInDirX = toReceivesFromRight ? 1f : -1f;
             var stubLen = ForwardEdgeStub;
@@ -1278,8 +1347,8 @@ namespace MornLib {
             if(type.IsGenericType) return type.GetGenericArguments()[0];
             return null;
         }
-        private static void EnsureStateLinks(MornStateMachine fsm) {
-            if(fsm == null) return;
+        private static bool EnsureStateLinks(MornStateMachine fsm) {
+            if(fsm == null) return false;
             var changed = false;
             foreach(var meta in fsm.Nodes) {
                 if(meta.behaviours == null) continue;
@@ -1288,6 +1357,7 @@ namespace MornLib {
                 }
             }
             if(changed) EditorUtility.SetDirty(fsm);
+            return changed;
         }
         private static IEnumerable<StateLink> ScanLinks(object obj,HashSet<object> visited,int depth) {
             if(obj == null || depth > MaxStateLinkScanDepth || visited.Add(obj) == false) yield break;
@@ -1304,8 +1374,8 @@ namespace MornLib {
             for(var i = 0;i < entries.Length;i++) {
                 var entry = entries[i];
                 var value = entry.Field.GetValue(obj);
-                if(value == null) continue;
                 if(entry.Kind == FieldKind.StateLink) { yield return (StateLink)value; continue; }
+                if(value == null) continue;
                 foreach(var l in ScanLinks(value,visited,depth + 1)) yield return l;
             }
         }
@@ -1318,9 +1388,13 @@ namespace MornLib {
             if(obj == null || depth > MaxStateLinkScanDepth || visited.Add(obj) == false) yield break;
             if(obj is System.Collections.IList list && obj is not string) {
                 for(var i = 0;i < list.Count;i++) {
-                    var item = list[i];
-                    if(item == null) continue;
                     var childPath = path.Length == 0 ? $"[{i}]" : $"{path}[{i}]";
+                    var item = list[i];
+                    if(item == null)
+                    {
+                        if(GetListElementType(list.GetType()) == typeof(StateLink)) yield return (childPath,null);
+                        continue;
+                    }
                     if(item is StateLink link) { yield return (childPath,link); continue; }
                     foreach(var pair in ScanLinksWithPath(item,childPath,visited,depth + 1)) yield return pair;
                 }
@@ -1329,10 +1403,10 @@ namespace MornLib {
             var entries = GetFieldEntries(obj.GetType());
             for(var i = 0;i < entries.Length;i++) {
                 var entry = entries[i];
-                var value = entry.Field.GetValue(obj);
-                if(value == null) continue;
                 var childPath = path.Length == 0 ? entry.Field.Name : $"{path}.{entry.Field.Name}";
+                var value = entry.Field.GetValue(obj);
                 if(entry.Kind == FieldKind.StateLink) { yield return (childPath,(StateLink)value); continue; }
+                if(value == null) continue;
                 foreach(var pair in ScanLinksWithPath(value,childPath,visited,depth + 1)) yield return pair;
             }
         }
@@ -2394,8 +2468,8 @@ namespace MornLib {
                 ? new Vector2(rec.targetNode.worldBound.xMax,targetCenter.y)
                 : new Vector2(rec.targetNode.worldBound.x,targetCenter.y);
             var isBackEdge = IsBackEdgeBetween(sourceCenter,targetCenter);
-            if(isBackEdge) inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMax - BackEdgeCornerInset);
-            else inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMin + BackEdgeCornerInset);
+            if(isBackEdge) inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMax - ScaledBackEdgeCornerInset);
+            else inWorld = new Vector2(inWorld.x,rec.targetNode.worldBound.yMin + ScaledBackEdgeCornerInset);
             var fromLocal = _edgesLayer.WorldToLocal(portEdgeWorld);
             var toLocal = _edgesLayer.WorldToLocal(inWorld);
             var fromOutDirX = sourcePortOnLeft ? -1f : 1f;
