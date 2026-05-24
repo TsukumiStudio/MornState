@@ -30,6 +30,9 @@ namespace MornLib {
         private MornStateMachine _sidebarRoot;
         private ToolbarToggle _sidebarToggle;
         private bool _sidebarVisible;
+        private int _lastSelectionID;
+        private int _lastSelectionFsmID;
+        private int _lastAppliedFsmID;
         private void OnEnable() {
             _sidebarVisible = SessionState.GetBool(SidebarVisibleKey,true);
             var content = new VisualElement();
@@ -95,12 +98,14 @@ namespace MornLib {
             SetSidebarVisible(_sidebarVisible);
             Selection.selectionChanged += Reload;
             Undo.undoRedoPerformed += Reload;
+            EditorApplication.update += SyncSelectionFsm;
             EditorApplication.playModeStateChanged += OnPlayModeChanged;
             Reload();
         }
         private void OnDisable() {
             Selection.selectionChanged -= Reload;
             Undo.undoRedoPerformed -= Reload;
+            EditorApplication.update -= SyncSelectionFsm;
             EditorApplication.playModeStateChanged -= OnPlayModeChanged;
         }
         private void OnPlayModeChanged(PlayModeStateChange c) {
@@ -127,6 +132,19 @@ namespace MornLib {
             }
             ApplyFsm(fsm);
         }
+        private void SyncSelectionFsm() {
+            if(_view == null) return;
+            var go = Selection.activeGameObject;
+            var selectionID = go != null ? go.GetInstanceID() : 0;
+            var selectionFsm = go != null ? go.GetComponentInParent<MornStateMachine>(true) : null;
+            var selectionFsmID = selectionFsm != null ? selectionFsm.GetInstanceID() : 0;
+            var pinnedID = _pinned != null ? _pinned.GetInstanceID() : 0;
+            if(selectionID == _lastSelectionID && selectionFsmID == _lastSelectionFsmID && pinnedID == _lastAppliedFsmID) {
+                return;
+            }
+
+            Reload();
+        }
         private void NavigateTo(MornStateMachine fsm) {
             if(fsm == null || fsm == _pinned) return;
             SetPinned(fsm);
@@ -138,6 +156,12 @@ namespace MornLib {
             if(_hint != null) _hint.style.display = fsm == null ? DisplayStyle.Flex : DisplayStyle.None;
             if(_targetField != null && _targetField.value != fsm) _targetField.SetValueWithoutNotify(fsm);
             RefreshSidebar(fsm);
+            _lastSelectionID = Selection.activeGameObject != null ? Selection.activeGameObject.GetInstanceID() : 0;
+            var selectionFsm = Selection.activeGameObject != null
+                ? Selection.activeGameObject.GetComponentInParent<MornStateMachine>(true)
+                : null;
+            _lastSelectionFsmID = selectionFsm != null ? selectionFsm.GetInstanceID() : 0;
+            _lastAppliedFsmID = fsm != null ? fsm.GetInstanceID() : 0;
         }
         private void SetSidebarVisible(bool visible) {
             _sidebarVisible = visible;
