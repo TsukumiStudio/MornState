@@ -1748,8 +1748,9 @@ namespace MornLib {
             _sectionsByNode[node] = new List<VisualElement>();
             for(var bi = 0;bi < meta.behaviours.Count;bi++) {
                 var b = meta.behaviours[bi];
-                if(b == null) continue;
-                var section = AddBehaviourSection(inspector,node,fsm,meta.id,bi,b,so);
+                var section = b != null
+                    ? AddBehaviourSection(inspector,node,fsm,meta.id,bi,b,so)
+                    : AddMissingBehaviourSection(inspector,meta.id,bi,GetBehaviourProperty(so,fsm,meta.id,bi));
                 _sectionsByNode[node].Add(section);
             }
             var addBtn = new Button(() => OpenAddBehaviourSearch(meta.id)) { text = "+ Add Behaviour", name = "morn-add-btn" };
@@ -1869,7 +1870,7 @@ namespace MornLib {
         private void BuildBehaviourMenuCommon(int stateID,int behaviourIndex,MornStateBehaviour state,int totalCount,System.Action<string,bool,System.Action> Item,System.Action Sep) {
             Item("Reset",true,() => ResetBehaviour(stateID,behaviourIndex));
             Sep();
-            Item("Remove Behaviour",true,() => RemoveBehaviour(stateID,state));
+            Item("Remove Behaviour",true,() => RemoveBehaviourAt(stateID,behaviourIndex));
             Item("Move Up",behaviourIndex > 0,() => MoveBehaviour(stateID,behaviourIndex,-1));
             Item("Move Down",behaviourIndex < totalCount - 1,() => MoveBehaviour(stateID,behaviourIndex,1));
             Sep();
@@ -1960,9 +1961,14 @@ namespace MornLib {
             EditorUtility.SetDirty(_target);
             LoadStateMachine(_target);
         }
+        private sealed class BehaviourSectionData {
+            public int stateID;
+            public int behaviourIndex;
+            public MornStateBehaviour state;
+        }
         private VisualElement AddBehaviourSection(VisualElement parent,Node node,MornStateMachine fsm,int stateID,int behaviourIndex,MornStateBehaviour state,SerializedObject so) {
             var section = new VisualElement();
-            section.userData = state;
+            section.userData = new BehaviourSectionData { stateID = stateID,behaviourIndex = behaviourIndex,state = state };
             section.style.marginBottom = 4;
             section.style.borderTopWidth = 1;
             section.style.borderTopColor = new Color(1f,1f,1f,0.1f);
@@ -2040,6 +2046,92 @@ namespace MornLib {
             }
             if(parent != null) parent.Add(section);
             return section;
+        }
+        private VisualElement AddMissingBehaviourSection(VisualElement parent,int stateID,int behaviourIndex,SerializedProperty behaviourProperty) {
+            var section = new VisualElement();
+            section.userData = new BehaviourSectionData { stateID = stateID,behaviourIndex = behaviourIndex };
+            section.style.marginBottom = 4;
+            section.style.borderTopWidth = 1;
+            section.style.borderTopColor = new Color(1f,0.25f,0.20f,0.55f);
+            section.style.paddingTop = 2;
+            section.style.paddingBottom = 4;
+            var header = new VisualElement();
+            header.style.flexDirection = FlexDirection.Row;
+            header.style.justifyContent = Justify.SpaceBetween;
+            header.style.alignItems = Align.Center;
+            header.style.marginBottom = 2;
+            var titleLabel = new Label("Missing Behaviour");
+            titleLabel.style.flexGrow = 1;
+            titleLabel.style.height = 18;
+            titleLabel.style.minHeight = 18;
+            titleLabel.style.unityTextAlign = TextAnchor.MiddleLeft;
+            titleLabel.style.paddingLeft = 4;
+            titleLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            titleLabel.style.color = new Color(1f,0.86f,0.80f);
+            titleLabel.style.backgroundColor = new Color(0.45f,0.08f,0.06f,0.80f);
+            titleLabel.style.borderTopLeftRadius = 2;
+            titleLabel.style.borderTopRightRadius = 2;
+            titleLabel.style.borderBottomLeftRadius = 2;
+            titleLabel.style.borderBottomRightRadius = 2;
+            header.Add(titleLabel);
+            var menuBtn = new Button() { text = "⋮" };
+            menuBtn.style.position = Position.Absolute;
+            menuBtn.style.right = 0;
+            menuBtn.style.top = 0;
+            menuBtn.style.width = 22;
+            menuBtn.style.height = 18;
+            menuBtn.style.minHeight = 18;
+            menuBtn.style.maxHeight = 18;
+            menuBtn.style.unityFontStyleAndWeight = FontStyle.Bold;
+            menuBtn.style.fontSize = 14;
+            menuBtn.style.paddingTop = 0;
+            menuBtn.style.paddingBottom = 0;
+            menuBtn.style.paddingLeft = 0;
+            menuBtn.style.paddingRight = 0;
+            menuBtn.style.marginTop = 0;
+            menuBtn.style.marginBottom = 0;
+            menuBtn.style.backgroundColor = new Color(0,0,0,0);
+            menuBtn.style.borderTopWidth = 0;
+            menuBtn.style.borderBottomWidth = 0;
+            menuBtn.style.borderLeftWidth = 0;
+            menuBtn.style.borderRightWidth = 0;
+            menuBtn.clicked += () => ShowMissingBehaviourContextMenu(stateID,behaviourIndex);
+            header.Add(menuBtn);
+            titleLabel.RegisterCallback<MouseDownEvent>(e => {
+                if(e.button != 0) return;
+                StartBehaviourDrag(stateID,behaviourIndex,section);
+                UpdateBehaviourDragHover(e.mousePosition);
+                e.StopPropagation();
+            });
+            section.Add(header);
+            var detail = new Label(GetMissingBehaviourLabel(behaviourProperty));
+            detail.style.whiteSpace = WhiteSpace.Normal;
+            detail.style.color = new Color(1f,0.72f,0.66f);
+            detail.style.marginLeft = 4;
+            detail.style.marginRight = 4;
+            section.Add(detail);
+            section.RegisterCallback<MouseDownEvent>(e => {
+                if(e.button != 1) return;
+                ShowMissingBehaviourContextMenu(stateID,behaviourIndex);
+                e.StopPropagation();
+            },TrickleDown.TrickleDown);
+            if(parent != null) parent.Add(section);
+            return section;
+        }
+        private static SerializedProperty GetBehaviourProperty(SerializedObject so,MornStateMachine fsm,int stateID,int behaviourIndex) {
+            if(so == null || fsm == null) return null;
+            var nodeIndex = fsm.NodesMutable.FindIndex(n => n.id == stateID);
+            if(nodeIndex < 0) return null;
+            return so.FindProperty("_nodes")
+                .GetArrayElementAtIndex(nodeIndex)
+                .FindPropertyRelative("behaviours")
+                .GetArrayElementAtIndex(behaviourIndex);
+        }
+        private static string GetMissingBehaviourLabel(SerializedProperty behaviourProperty) {
+            if(behaviourProperty == null) return "Serialized type is unavailable.";
+            var typeName = behaviourProperty.managedReferenceFullTypename;
+            if(string.IsNullOrEmpty(typeName)) return "Serialized type is unavailable.";
+            return $"Serialized type is unavailable: {typeName}";
         }
         private VisualElement CreateOutputPortRow(Node node,MornStateBehaviour state,StateLink link,string fieldName,bool placeOnLeft) {
             var row = new VisualElement();
@@ -2245,7 +2337,7 @@ namespace MornLib {
             section.style.borderLeftColor = new Color(0.3f,0.7f,1.0f);
             var meta = _target?.FindNode(stateID);
             var b = meta != null && behaviourIndex < meta.behaviours.Count ? meta.behaviours[behaviourIndex] : null;
-            var typeName = b?.GetType().Name ?? "?";
+            var typeName = b?.GetType().Name ?? "Missing Behaviour";
             var ghostLabel = new Label($"⇆ {typeName}");
             ghostLabel.style.position = Position.Absolute;
             ghostLabel.style.backgroundColor = new Color(0.15f,0.15f,0.15f,0.95f);
@@ -2380,31 +2472,62 @@ namespace MornLib {
             EditorUtility.SetDirty(_target);
             EditorApplication.delayCall += () => LoadStateMachine(_target);
         }
-        private void RemoveBehaviour(int stateID,MornStateBehaviour state) {
+        private void RemoveBehaviourAt(int stateID,int behaviourIndex) {
             if(_target == null) return;
             var meta = _target.FindNode(stateID);
             if(meta == null) return;
+            if(behaviourIndex < 0 || behaviourIndex >= meta.behaviours.Count) return;
             Undo.RegisterCompleteObjectUndo(_target,"Remove Behaviour");
-            meta.behaviours.Remove(state);
+            meta.behaviours.RemoveAt(behaviourIndex);
             EditorUtility.SetDirty(_target);
             EditorApplication.delayCall += () => LoadStateMachine(_target);
+        }
+        private void ShowMissingBehaviourContextMenu(int stateID,int behaviourIndex) {
+            if(_target == null) return;
+            var meta = _target.FindNode(stateID);
+            var totalCount = meta != null ? meta.behaviours.Count : 0;
+            var menu = new GenericMenu();
+            void Item(string label,bool enabled,System.Action act) {
+                if(enabled) menu.AddItem(new GUIContent(label),false,() => act());
+                else menu.AddDisabledItem(new GUIContent(label));
+            }
+            void Sep() => menu.AddSeparator("");
+            BuildMissingBehaviourMenuCommon(stateID,behaviourIndex,totalCount,Item,Sep);
+            menu.ShowAsContext();
+        }
+        private void AppendMissingBehaviourMenuItems(DropdownMenu menu,int stateID,int behaviourIndex,int totalCount) {
+            void Item(string label,bool enabled,System.Action act) {
+                menu.AppendAction(label,_ => act(),_ => enabled ? DropdownMenuAction.Status.Normal : DropdownMenuAction.Status.Disabled);
+            }
+            void Sep() => menu.AppendSeparator();
+            BuildMissingBehaviourMenuCommon(stateID,behaviourIndex,totalCount,Item,Sep);
+        }
+        private void BuildMissingBehaviourMenuCommon(int stateID,int behaviourIndex,int totalCount,System.Action<string,bool,System.Action> Item,System.Action Sep) {
+            Item("Remove Behaviour",true,() => RemoveBehaviourAt(stateID,behaviourIndex));
+            Item("Move Up",behaviourIndex > 0,() => MoveBehaviour(stateID,behaviourIndex,-1));
+            Item("Move Down",behaviourIndex < totalCount - 1,() => MoveBehaviour(stateID,behaviourIndex,1));
+            Sep();
+            Item("Paste Behaviour As New",TryGetClipboardBehaviourType() != null,() => PasteBehaviourAsNew(stateID));
         }
         public override void BuildContextualMenu(ContextualMenuPopulateEvent evt) {
             if(_target == null) return;
             Node hitNode = null;
-            MornStateBehaviour hitBehaviour = null;
+            BehaviourSectionData hitBehaviourData = null;
             if(evt.target is VisualElement ve) {
                 for(VisualElement cur = ve;cur != null;cur = cur.parent) {
-                    if(hitBehaviour == null && cur.userData is MornStateBehaviour bh) hitBehaviour = bh;
+                    if(hitBehaviourData == null && cur.userData is BehaviourSectionData bh) hitBehaviourData = bh;
                     if(cur is Node n) { hitNode = n; break; }
                 }
             }
-            if(hitBehaviour != null && hitNode != null && hitNode.userData is int bsid) {
+            if(hitBehaviourData != null && hitNode != null && hitNode.userData is int bsid) {
                 var meta = _target.FindNode(bsid);
                 if(meta != null) {
-                    var idx = meta.behaviours.IndexOf(hitBehaviour);
+                    var idx = hitBehaviourData.state != null
+                        ? meta.behaviours.IndexOf(hitBehaviourData.state)
+                        : hitBehaviourData.behaviourIndex;
                     if(idx >= 0) {
-                        AppendBehaviourMenuItems(evt.menu,bsid,idx,hitBehaviour,meta.behaviours.Count);
+                        if(hitBehaviourData.state != null) AppendBehaviourMenuItems(evt.menu,bsid,idx,hitBehaviourData.state,meta.behaviours.Count);
+                        else AppendMissingBehaviourMenuItems(evt.menu,bsid,idx,meta.behaviours.Count);
                         return;
                     }
                 }
