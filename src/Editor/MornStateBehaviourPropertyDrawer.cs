@@ -1,5 +1,6 @@
 using System.Reflection;
 using UnityEditor;
+using UnityEngine;
 using UnityEngine.UIElements;
 
 namespace MornLib
@@ -44,6 +45,7 @@ namespace MornLib
                 so.Update();
                 var beforeStateLinkSig = skipStateLinks ? ComputeStateLinkSig(behaviourProperty) : 0;
                 EditorGUI.BeginChangeCheck();
+                var target = ResolveTarget(behaviourProperty);
                 var iter = behaviourProperty.Copy();
                 var end = iter.GetEndProperty();
                 if(iter.NextVisible(true))
@@ -52,7 +54,10 @@ namespace MornLib
                     {
                         if(SerializedProperty.EqualContents(iter,end)) break;
                         if(skipStateLinks && IsStateLink(iter)) continue;
-                        EditorGUILayout.PropertyField(iter,true);
+                        if(DrawRangeFieldIfNeeded(iter,target) == false)
+                        {
+                            EditorGUILayout.PropertyField(iter,true);
+                        }
                     } while(iter.NextVisible(false));
                 }
                 var changed = EditorGUI.EndChangeCheck();
@@ -123,6 +128,48 @@ namespace MornLib
         {
             return prop.propertyType == SerializedPropertyType.Generic
                    && prop.type == nameof(StateLink);
+        }
+
+        private static bool DrawRangeFieldIfNeeded(SerializedProperty prop,object target)
+        {
+            if(target == null) return false;
+            var field = FindField(target.GetType(),prop.name);
+            var range = field?.GetCustomAttribute<RangeAttribute>();
+            if(range == null) return false;
+            var label = new GUIContent(prop.displayName);
+            if(prop.propertyType == SerializedPropertyType.Float)
+            {
+                prop.floatValue = DrawFloatSlider(label,prop.floatValue,range.min,range.max);
+                return true;
+            }
+            if(prop.propertyType == SerializedPropertyType.Integer)
+            {
+                prop.intValue = DrawIntSlider(label,prop.intValue,Mathf.RoundToInt(range.min),Mathf.RoundToInt(range.max));
+                return true;
+            }
+            return false;
+        }
+
+        private static float DrawFloatSlider(GUIContent label,float value,float min,float max)
+        {
+            using(new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField(label,GUILayout.Width(EditorGUIUtility.labelWidth));
+                value = GUILayout.HorizontalSlider(value,min,max,GUILayout.MinWidth(55));
+                value = EditorGUILayout.FloatField(value,GUILayout.Width(44));
+            }
+            return Mathf.Clamp(value,min,max);
+        }
+
+        private static int DrawIntSlider(GUIContent label,int value,int min,int max)
+        {
+            using(new EditorGUILayout.HorizontalScope())
+            {
+                EditorGUILayout.LabelField(label,GUILayout.Width(EditorGUIUtility.labelWidth));
+                value = Mathf.RoundToInt(GUILayout.HorizontalSlider(value,min,max,GUILayout.MinWidth(55)));
+                value = EditorGUILayout.IntField(value,GUILayout.Width(44));
+            }
+            return Mathf.Clamp(value,min,max);
         }
 
         private static int ComputeStateLinkSig(SerializedProperty behaviourProperty)
@@ -198,10 +245,16 @@ namespace MornLib
         {
             if(obj == null) return null;
             var type = obj.GetType();
+            var field = FindField(type,name);
+            return field != null ? field.GetValue(obj) : null;
+        }
+
+        private static FieldInfo FindField(System.Type type,string name)
+        {
             while(type != null)
             {
                 var f = type.GetField(name,BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if(f != null) return f.GetValue(obj);
+                if(f != null) return f;
                 type = type.BaseType;
             }
             return null;
