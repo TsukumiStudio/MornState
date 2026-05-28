@@ -1,8 +1,7 @@
 using System;
 using UnityEngine;
-#if USE_VCONTAINER
+using VContainer;
 using VContainer.Unity;
-#endif
 namespace MornLib {
     [Serializable]
     [MornStateMenu("SubState")]
@@ -16,9 +15,7 @@ namespace MornLib {
         [SerializeField, ShowIf(nameof(IsInstantiate))] private Transform _parent;
         [SerializeField, ShowIf(nameof(IsSceneReference))] private MornStateMachineInternal _sceneInstance;
         [SerializeField] private bool _forceAutoDestroy;
-#if USE_VCONTAINER
-        [VContainer.Inject] private VContainer.IObjectResolver _resolver;
-#endif
+        [Inject] private IObjectResolver _resolver;
         private MornStateMachineInternal _runtime;
         private bool _ownsRuntime;
         private bool IsInstantiate => _mode == SourceMode.Instantiate;
@@ -54,10 +51,7 @@ namespace MornLib {
             return _mode == SourceMode.Instantiate ? _prefab : _sceneInstance;
         }
         private MornStateMachineInternal InstantiateMachine(MornStateMachineInternal prefab, Transform parent) {
-#if USE_VCONTAINER
-            if(_resolver != null) return _resolver.Instantiate(prefab, parent);
-#endif
-            return parent != null ? UnityEngine.Object.Instantiate(prefab, parent) : UnityEngine.Object.Instantiate(prefab);
+            return _resolver.Instantiate(prefab, parent);
         }
     }
 }

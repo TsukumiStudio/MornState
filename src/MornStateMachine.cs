@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using UnityEngine;
+using VContainer;
 namespace MornLib {
     public class MornStateMachine : MornStateMachineInternal {
         [Serializable]
@@ -58,9 +59,8 @@ namespace MornLib {
             _pendingTransition = stateID;
             FlushPending();
         }
-#if USE_VCONTAINER
-        [VContainer.Inject]
-        public void Construct(VContainer.IObjectResolver resolver) {
+        [Inject]
+        public void Construct(IObjectResolver resolver) {
             foreach(var n in _nodes) {
                 if(n.behaviours == null) continue;
                 foreach(var b in n.behaviours) {
@@ -69,7 +69,6 @@ namespace MornLib {
                 }
             }
         }
-#endif
         public void ReinjectOwners() {
             foreach(var n in _nodes) {
                 if(n.behaviours == null) continue;
