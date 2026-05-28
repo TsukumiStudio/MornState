@@ -111,6 +111,7 @@ namespace MornLib {
             Reload();
         }
         private void OnDisable() {
+            _view?.DisposeEditorResources();
             Selection.selectionChanged -= Reload;
             Undo.undoRedoPerformed -= Reload;
             EditorApplication.update -= SyncSelectionFsm;
@@ -294,6 +295,7 @@ namespace MornLib {
         private VisualElement _behaviourDropIndicator;
         private int _behaviourDropInsertIndex = -1;
         private Vector2 _behaviourDragGhostSize;
+        private bool _editorUpdateRegistered;
         private readonly Dictionary<Node,List<VisualElement>> _sectionsByNode = new();
         private const float BackEdgeBaseDepth = 40f;
         private const float BackEdgeStepDepth = 28f;
@@ -305,7 +307,6 @@ namespace MornLib {
         private const int HighlightBorderWidth = 4;
         private const float NodeColumnSpacing = 400f;
         private const double MaintenanceIntervalSeconds = 0.2;
-        private const double IdleEdgeRepaintIntervalSeconds = 0.1;
         private const string BehaviourClipboardPrefix = "MORNSTATE_BEHAVIOUR:";
         private static readonly Dictionary<System.Type,MonoScript> _scriptCache = new();
         public MornStateMachineGraphView() {
@@ -353,8 +354,8 @@ namespace MornLib {
             serializeGraphElements = SerializeForClipboard;
             unserializeAndPaste = UnserializeAndPaste;
             canPasteSerializedData = data => string.IsNullOrEmpty(data) == false && data.StartsWith("{");
-            EditorApplication.update += OnEditorUpdate;
-            RegisterCallback<DetachFromPanelEvent>(_ => EditorApplication.update -= OnEditorUpdate);
+            RegisterCallback<AttachToPanelEvent>(_ => RegisterEditorUpdate());
+            RegisterCallback<DetachFromPanelEvent>(_ => UnregisterEditorUpdate());
             nodeCreationRequest = ctx => {
                 if(_target == null) return;
                 var window = EditorWindow.focusedWindow;
@@ -363,6 +364,19 @@ namespace MornLib {
                 var graphPos = contentViewContainer.WorldToLocal(this.LocalToWorld(viewLocal));
                 CreateEmptyStateAt(graphPos);
             };
+        }
+        private void RegisterEditorUpdate() {
+            if(_editorUpdateRegistered) return;
+            EditorApplication.update += OnEditorUpdate;
+            _editorUpdateRegistered = true;
+        }
+        private void UnregisterEditorUpdate() {
+            if(_editorUpdateRegistered == false) return;
+            EditorApplication.update -= OnEditorUpdate;
+            _editorUpdateRegistered = false;
+        }
+        public void DisposeEditorResources() {
+            UnregisterEditorUpdate();
         }
         private struct EdgeRecord {
             public Port outputPort;
@@ -1001,7 +1015,6 @@ namespace MornLib {
         }
         private double _lastStructuralCheckTime;
         private double _lastMaintenanceTime;
-        private double _lastIdleEdgeRepaintTime;
         private bool _graphRefreshQueued;
         private void OnEditorUpdate() {
             var hadAnimations = _animations.Count > 0;
@@ -1025,10 +1038,6 @@ namespace MornLib {
             }
 
             if(hadAnimations || _animations.Count > 0 || _isDraggingEdge || _isDraggingBehaviour) {
-                _edgesLayer?.MarkDirtyRepaint();
-                _edgesLayerFront?.MarkDirtyRepaint();
-            } else if(now - _lastIdleEdgeRepaintTime >= IdleEdgeRepaintIntervalSeconds) {
-                _lastIdleEdgeRepaintTime = now;
                 _edgesLayer?.MarkDirtyRepaint();
                 _edgesLayerFront?.MarkDirtyRepaint();
             }
