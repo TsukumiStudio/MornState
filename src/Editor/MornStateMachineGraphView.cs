@@ -276,6 +276,12 @@ namespace MornLib {
         private readonly Dictionary<int,int> _nodeSig = new();
         private readonly Dictionary<Node,AnimState> _animations = new();
         private double _lastAnimTime;
+        private bool _viewAnimActive;
+        private Vector3 _viewAnimStartPos;
+        private Vector3 _viewAnimEndPos;
+        private float _viewAnimElapsed;
+        private float _viewAnimDuration;
+        private double _lastViewAnimTime;
         private int _lastCurrentSnapshot = int.MinValue;
         private readonly Dictionary<(int from,int to),Label> _edgeBadges = new();
         private readonly List<Port> _portsToUpdate = new();
@@ -354,6 +360,8 @@ namespace MornLib {
             serializeGraphElements = SerializeForClipboard;
             unserializeAndPaste = UnserializeAndPaste;
             canPasteSerializedData = data => string.IsNullOrEmpty(data) == false && data.StartsWith("{");
+            RegisterCallback<WheelEvent>(_ => _viewAnimActive = false,TrickleDown.TrickleDown);
+            RegisterCallback<PointerDownEvent>(_ => _viewAnimActive = false,TrickleDown.TrickleDown);
             RegisterCallback<AttachToPanelEvent>(_ => RegisterEditorUpdate());
             RegisterCallback<DetachFromPanelEvent>(_ => UnregisterEditorUpdate());
             nodeCreationRequest = ctx => {
@@ -479,6 +487,44 @@ namespace MornLib {
             var viewportCenter = new Vector2(viewport.width,viewport.height) * 0.5f;
             var position = viewportCenter - contentCenter * scale;
             UpdateViewTransform(position,new Vector3(scale,scale,1f));
+        }
+        // 新規ステートは配置座標が自動決定されるため、生成直後になめらかにその位置へカメラを寄せる
+        public void FocusOnNodeSmooth(int nodeID) {
+            schedule.Execute(() => FocusOnNodeNow(nodeID)).StartingIn(160);
+        }
+        private void FocusOnNodeNow(int nodeID) {
+            if(_nodeByID.TryGetValue(nodeID,out var node) == false) return;
+            var size = new Vector2(node.layout.width,node.layout.height);
+            if(size.x <= 0 || size.y <= 1f || float.IsNaN(size.x) || float.IsNaN(size.y)) {
+                schedule.Execute(() => FocusOnNodeNow(nodeID)).StartingIn(50);
+                return;
+            }
+            var viewport = contentRect;
+            if(viewport.width <= 0 || viewport.height <= 0) return;
+            var scale = viewTransform.scale.x;
+            if(scale <= 0.0001f) scale = 1f;
+            var nodeCenter = GetAbsolutePosition(node) + size * 0.5f;
+            var viewportCenter = new Vector2(viewport.width,viewport.height) * 0.5f;
+            var target = viewportCenter - nodeCenter * scale;
+            _viewAnimStartPos = viewTransform.position;
+            _viewAnimEndPos = new Vector3(target.x,target.y,0f);
+            _viewAnimElapsed = 0f;
+            _viewAnimDuration = 0.35f;
+            _lastViewAnimTime = EditorApplication.timeSinceStartup;
+            _viewAnimActive = true;
+        }
+        private void TickViewAnimation() {
+            if(_viewAnimActive == false) { _lastViewAnimTime = EditorApplication.timeSinceStartup; return; }
+            var now = EditorApplication.timeSinceStartup;
+            var dt = (float)(now - _lastViewAnimTime);
+            _lastViewAnimTime = now;
+            if(dt <= 0 || dt > 0.25f) dt = 0.016f;
+            _viewAnimElapsed += dt;
+            var t = Mathf.Clamp01(_viewAnimElapsed / _viewAnimDuration);
+            var eased = 1f - Mathf.Pow(1f - t,3f);
+            var pos = Vector3.Lerp(_viewAnimStartPos,_viewAnimEndPos,eased);
+            UpdateViewTransform(pos,viewTransform.scale);
+            if(t >= 1f) _viewAnimActive = false;
         }
         public void LoadStateMachine(MornStateMachine fsm) {
             var stateLinksChanged = EnsureStateLinks(fsm);
@@ -1018,7 +1064,9 @@ namespace MornLib {
         private bool _graphRefreshQueued;
         private void OnEditorUpdate() {
             var hadAnimations = _animations.Count > 0;
+            var hadViewAnim = _viewAnimActive;
             TickAnimations();
+            TickViewAnimation();
             var snapshot = Application.isPlaying && _target != null ? _target.CurrentStateID : 0;
             if(snapshot != _lastCurrentSnapshot) {
                 _lastCurrentSnapshot = snapshot;
@@ -1037,7 +1085,7 @@ namespace MornLib {
                 DetectStructuralChange();
             }
 
-            if(hadAnimations || _animations.Count > 0 || _isDraggingEdge || _isDraggingBehaviour) {
+            if(hadAnimations || _animations.Count > 0 || hadViewAnim || _viewAnimActive || _isDraggingEdge || _isDraggingBehaviour) {
                 _edgesLayer?.MarkDirtyRepaint();
                 _edgesLayerFront?.MarkDirtyRepaint();
             }
@@ -2767,6 +2815,7 @@ namespace MornLib {
             if(_target.startStateID == 0) _target.startStateID = newID;
             EditorUtility.SetDirty(_target);
             LoadStateMachine(_target);
+            FocusOnNodeSmooth(newID);
         }
         public void CreateStateAt(System.Type type,Vector2 graphPos) {
             if(_target == null) return;
@@ -2783,6 +2832,7 @@ namespace MornLib {
             if(_target.startStateID == 0) _target.startStateID = newID;
             EditorUtility.SetDirty(_target);
             LoadStateMachine(_target);
+            FocusOnNodeSmooth(newID);
         }
         public void AddBehaviourToState(System.Type type,int stateID) {
             if(_target == null) return;
